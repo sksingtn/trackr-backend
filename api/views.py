@@ -1,26 +1,25 @@
+from collections import defaultdict
+
 from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
 from rest_framework.generics import CreateAPIView,ListCreateAPIView,ListAPIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny,IsAuthenticated
 from rest_framework import status
-from rest_framework.authtoken.models import Token
+from rest_framework.exceptions import ValidationError
+from django.utils import timezone
+
 import api.serializers as ser
 from base.models import CustomUser,AdminProfile,FacultyProfile,Schedule,SlotInfo
 from .permissions import IsAdmin
-from pprint import pprint
-from collections import defaultdict
-from rest_framework.mixins import CreateModelMixin
-from django.utils import timezone
 from .pagination import ModifiedPageNumberPagination
-from rest_framework.exceptions import ValidationError
+from .utils import WEEKDAYS
 
-#Wrap up & document
 
-weekdays = ['Sunday', 'Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 class SignupView(APIView):
-
+    """ Signup for Admins """
     serializer_class = ser.SignupSerializer
     permission_classes = [AllowAny]
     def post(self,request):
@@ -39,12 +38,16 @@ class SignupView(APIView):
 
 
 class FacultyView(APIView):
-    """Shows All the Connected Faculties & their status on GET,
-        Invite functionality via POST"""
+    """
+    Shows All the Connected Faculties or a subset (on search) on GET,
+    Invite functionality via POST i.e send an inviation mail when email 
+    is given otherwise simply add a blank user.
+    """
     serializer_class = ser.FacultySerializer
     permission_classes = [IsAuthenticated,IsAdmin]
 
-    def get(self,request):      
+    def get(self,request):  
+        #Test and replace by request.profile.invited_faculties.all().order_by('name')    
         connected_faculties = FacultyProfile.objects.filter(admin=request.profile).order_by('name')
         search = request.query_params.get('q')
         if search:
@@ -52,7 +55,7 @@ class FacultyView(APIView):
         
         paginator = ModifiedPageNumberPagination()
         page = paginator.paginate_queryset(connected_faculties, request)
-        serializer = ser.FacultySerializer(page, many=True,context={'request':request})
+        serializer = self.serializer_class(page, many=True,context={'request':request})
         return paginator.get_paginated_response(serializer.data)
 
 
@@ -78,7 +81,8 @@ class SlotView(APIView):
         return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
 
     def put(self, request, slot_id=None):
-        #Test case for different admin
+
+        """ Make sure that requested slot is owned by current admin """
         try:
             slot = SlotInfo.objects.get(pk=slot_id,schedule__admin=self.request.profile)
         except SlotInfo.DoesNotExist:
@@ -127,12 +131,12 @@ class BatchView(APIView):
         for item in connected_slots.data:
             weekday_dict[item.pop('weekday')].append(item)
 
-        #Fill the empty weekday values
-        remaining = ({}.fromkeys(set(weekdays).difference(weekday_dict.keys()),[]))
+        #Fill the empty weekdays with empty list.
+        remaining = ({}.fromkeys(set(WEEKDAYS).difference(weekday_dict.keys()),[]))
         weekday_dict.update(remaining)
 
         #Sort them by weekday
-        weekday_dict = dict(sorted(weekday_dict.items(),key=lambda x : weekdays.index(x[0])))
+        weekday_dict = dict(sorted(weekday_dict.items(),key=lambda x : WEEKDAYS.index(x[0])))
 
         return Response({'status':1,'data':{**data,"weekdayData":weekday_dict}},status=status.HTTP_200_OK)
 

@@ -1,15 +1,17 @@
-from rest_framework import serializers
-from base.models import CustomUser,FacultyProfile,Slot,SlotInfo,Schedule
-from operator import itemgetter as fetch
-from django.db.models import Q
+from operator import itemgetter
 from datetime import datetime,date
+
+from rest_framework import serializers
+from django.db.models import Q
 from django.utils import timezone
 
+from base.models import CustomUser,FacultyProfile,Slot,SlotInfo,Schedule
 
 class SignupSerializer(serializers.ModelSerializer):
 
     name = serializers.CharField(write_only=True)
 
+    #Because default create would'nt hash the password.
     def create(self,validated_data):      
         return CustomUser.objects.create_user(**validated_data)
         
@@ -31,6 +33,7 @@ class FacultySerializer(serializers.ModelSerializer):
     image = serializers.SerializerMethodField()
 
     def create(self,validated_data):
+        """ Faculty Invite logic """
         email = validated_data.pop('email',False)
         if email:
             invited_user = CustomUser(email=email)
@@ -38,7 +41,7 @@ class FacultySerializer(serializers.ModelSerializer):
             invited_user.save()
             validated_data['user'] = invited_user
 
-            #Send An Invite Link
+            #Send An Invite Link below =>
 
         return FacultyProfile.objects.create(**validated_data)
 
@@ -70,7 +73,7 @@ class SlotSerializer(serializers.ModelSerializer):
 
 
     def validate(self,validated_data):
-        start,end = fetch('start_time','end_time')(validated_data)
+        start,end = itemgetter('start_time','end_time')(validated_data)
 
         if start >= end:
             raise serializers.ValidationError('start time cant be greater than end time!')
@@ -98,6 +101,7 @@ class CreateSlotSerializer(serializers.ModelSerializer):
             setattr(instance,key,value)        
         instance.save()
 
+        #If slot is changed and old slot timing has no slots. (Garbage Collection)
         if old_slot != instance.slot and not old_slot.slotinfo_set.exists():
             old_slot.delete()
 
@@ -106,6 +110,10 @@ class CreateSlotSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def overlap_checker(queryset,start_time,end_time,weekday):
+        """
+        Tries to find a slot which exists between the given start_time-end_time interval on a given weekday.
+        If found returns the first slot.
+        """
         query = lambda time : Q(slot__start_time__lte=time,slot__end_time__gte=time)
 
         result = queryset.filter(slot__weekday=weekday).filter(
@@ -120,28 +128,30 @@ class CreateSlotSerializer(serializers.ModelSerializer):
         faculty = validated_data.get('faculty')
         schedule = validated_data.get('schedule')
 
+        #To diffrentiate b/w creation & updation of slots.
         if self.instance:
 
-            #Cant Change batch of a slot
             if self.instance.schedule != schedule:
                 raise serializers.ValidationError('Cant Move a slot to another batch!')
         
         #slot deletion handling in update
 
-        #Making Sure that The Faculty/Schedule is connected to the current Admin
+        #Making Sure that the given Faculty/Schedule is connected to the current Admin
         for index,item in enumerate([faculty.admin,schedule.admin]):           
             if item != admin_profile:
                 raise serializers.ValidationError(
                     f"The requested {'Batch' if index else 'Faculty'} was not {'added' if index else 'invited'} by current admin!")
 
-        
+        #I dont like this, make it explicit
         (_,start_time),(_,end_time),(_,weekday) = validated_data.get('slot').items()
         current_slot = [start_time,end_time,weekday]
 
-        #Making Sure That there is no overlap between slots of the current schedule.
+        #Making Sure That there is no time overlap between slots of the current schedule.
         queryset = schedule.connected_slots
+
+        #Move this to overlap_checker and encapsulate
         if self.instance:
-            #Exclude Current Slot Timing from consideration
+            #Exclude Current Slot from overlap check when updating a slot.
             queryset = queryset.exclude(pk=self.instance.id)
 
         overlapped_slots = self.overlap_checker(queryset,*current_slot)
@@ -150,10 +160,10 @@ class CreateSlotSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(f'Requested timing overlaps with {overlapped_slots.title} ({overlapped_slots.slot.start_time} - {overlapped_slots.slot.end_time})')
 
 
-        #Making Sure that overlapping slots are not assigned to a faculty for a single admin.
+        #Making Sure that a faculty is not assigned classes in different batches at overlapping times.
         queryset = SlotInfo.objects.filter(faculty=faculty)
         if self.instance:
-            #Exclude Current Slot Timing from consideration
+            #Exclude Current Slot Timing from consideration when updating a slot.
             queryset = queryset.exclude(pk=self.instance.id)
 
         multiple_slots = self.overlap_checker(queryset,*current_slot)
@@ -188,6 +198,7 @@ class BatchSerializer(serializers.ModelSerializer):
         return instance.students.count()
 
     def get_verifiedFaculties(self,instance):
+        #Could also use self.instance.connected_slots.distinct('faculty')
         total_faculties = set(FacultyProfile.objects.filter(slotinfo__schedule=instance))     
         verifiedFaculties = map(lambda profile: profile.status == "VERIFIED",total_faculties)                
         return f'{sum(verifiedFaculties)}/{len(total_faculties)}'
@@ -216,7 +227,7 @@ class SlotInfoSerializer(serializers.ModelSerializer):
         return instance.slot.end_time.strftime('%I:%M %p')
 
     def get_duration(self,instance):
-        #Cant subtract time from time so combined both with a same date
+        #Cant subtract time from time so combined both with common date
         startTime = datetime.combine(date.today(), instance.slot.start_time)
         endTime = datetime.combine(date.today(), instance.slot.end_time)
         return f'{int((endTime-startTime).total_seconds()//60)} Mins'
