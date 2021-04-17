@@ -62,8 +62,11 @@ class AdminProfile(models.Model):
 
 
 class FacultyProfile(models.Model):
-    # Maybe Initialize a user with unusable_password
-    # Add the Email Invitation as a post_save trigger
+    """Initialize a user with unusable_password if invited and let them set a password
+        upon accepting the Invite . If not invited then leave the user field empty
+    """
+
+    # Add the Email Invitation as a post_save trigger or in the serializer.
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
     admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE,related_name='invited_faculties')
@@ -81,6 +84,7 @@ class FacultyProfile(models.Model):
 
 
 class StudentProfile(models.Model):
+    #Currently a student can be connected to multiple batches 
     user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=200)
     image = models.ImageField(upload_to='profile_images/student/', default='default.jpg')
@@ -93,6 +97,7 @@ class StudentProfile(models.Model):
 class Schedule(models.Model):
     title = models.CharField(max_length=200)
     admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE)
+    #What happens when disabled?
     active = models.BooleanField(default=True)
 
     students = models.ManyToManyField(StudentProfile,through="StudentData")
@@ -112,7 +117,7 @@ class StudentData(models.Model):
         return f'{self.student.name} Followed {self.schedule.title} on {self.date_followed}'
 
 
-
+#Rename to timing
 class Slot(models.Model):
     """This is not attached to a user to ease the notifier function,
         because this way we can query for an incoming slot and it will give us
@@ -133,7 +138,7 @@ class Slot(models.Model):
     def __str__(self):
         return f'{self.start_time} - {self.end_time} ({self.weekday})'
 
-
+#Rename to slot
 class SlotInfo(models.Model):
     schedule = models.ForeignKey(Schedule, related_name='connected_slots', on_delete=models.CASCADE)
     faculty = models.ForeignKey(FacultyProfile, on_delete=models.CASCADE)
@@ -142,6 +147,8 @@ class SlotInfo(models.Model):
     created = models.DateTimeField(default=timezone.now)
 
     class Meta:
+        #Inside a batch, there should be no 2 classes happening at the same time
+        #Maybe this is redundant because the serializers already detect overlapping classes in a batch
         unique_together = ['slot', 'schedule']
 
     def __str__(self):

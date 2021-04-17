@@ -5,6 +5,8 @@ from rest_framework.status import HTTP_400_BAD_REQUEST
 from pprint import pprint
 
 
+WEEKDAYS = ['Sunday', 'Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday']
+
 def custom_exception_handler(exc, context):
     # Call REST framework's default exception handler first,
     # to get the standard error response.

@@ -4,7 +4,7 @@ from rest_framework.pagination import PageNumberPagination
 class ModifiedPageNumberPagination(PageNumberPagination):
 
     def get_paginated_response(self,data):
-        #Adds Paginated Index to each entry
+        #Adds a serial number to each entry
         current_page = self.request.query_params.get('page',1)
         current_page = int(current_page)
 
