@@ -2,7 +2,7 @@ from rest_framework.views import exception_handler
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.status import HTTP_400_BAD_REQUEST
-from pprint import pprint
+
 
 
 WEEKDAYS = ['Sunday', 'Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday']

@@ -1,9 +1,12 @@
+from datetime import date
+
 from django.db import models
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
-from trackr.settings import AUTH_USER_MODEL as User
-from datetime import date
 from django.utils import timezone
+
+from AdminUser.models import AdminProfile
+from FacultyUser.models import FacultyProfile
 
 
 class CustomUserManager(BaseUserManager):
@@ -52,55 +55,11 @@ class CustomUser(AbstractUser):
         return self.email
 
 
-class AdminProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    name = models.CharField(max_length=200)
-    image = models.ImageField(upload_to='profile_images/admin/', default='default.jpg')
-
-    def __str__(self):
-        return f'{self.name} (ADMIN)'
-
-
-class FacultyProfile(models.Model):
-    """Initialize a user with unusable_password if invited and let them set a password
-        upon accepting the Invite . If not invited then leave the user field empty
-    """
-
-    # Add the Email Invitation as a post_save trigger or in the serializer.
-
-    user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
-    admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE,related_name='invited_faculties')
-    name = models.CharField(max_length=200)
-    image = models.ImageField(upload_to='profile_images/faculty/',default='default.jpg')
-
-    @property
-    def status(self):
-        if self.user:
-            return 'VERIFIED' if self.user.has_usable_password() else 'INVITED'
-        return 'UNVERIFIED'
-
-    def __str__(self):
-        return f'{self.name} (Invited by : {self.admin.name} | Status : {self.status})'
-
-
-class StudentProfile(models.Model):
-    #Currently a student can be connected to multiple batches 
-    user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
-    name = models.CharField(max_length=200)
-    image = models.ImageField(upload_to='profile_images/student/', default='default.jpg')
-
-    def __str__(self):
-        return f'{self.name} (STUDENT)'
-
-
-# Rename to Batch
-class Schedule(models.Model):
+class Batch(models.Model):
     title = models.CharField(max_length=200)
     admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE)
     #What happens when disabled?
     active = models.BooleanField(default=True)
-
-    students = models.ManyToManyField(StudentProfile,through="StudentData")
     created = models.DateField(default=date.today)
 
     def __str__(self):
@@ -108,17 +67,7 @@ class Schedule(models.Model):
         return f'{self.title} ({self.connected_slots.all().count()} Slots Assigned)'
 
 
-class StudentData(models.Model):
-    schedule = models.ForeignKey(Schedule, on_delete=models.CASCADE)
-    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE)
-    date_followed = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f'{self.student.name} Followed {self.schedule.title} on {self.date_followed}'
-
-
-#Rename to timing
-class Slot(models.Model):
+class Timing(models.Model):
     """This is not attached to a user to ease the notifier function,
         because this way we can query for an incoming slot and it will give us
         details for upcoming classes of every batch of every user"""
@@ -138,18 +87,21 @@ class Slot(models.Model):
     def __str__(self):
         return f'{self.start_time} - {self.end_time} ({self.weekday})'
 
-#Rename to slot
-class SlotInfo(models.Model):
-    schedule = models.ForeignKey(Schedule, related_name='connected_slots', on_delete=models.CASCADE)
+
+#Add a last notified field (what to do with it in update?)
+class Slot(models.Model):
+    batch = models.ForeignKey(Batch, related_name='connected_slots', on_delete=models.CASCADE)
     faculty = models.ForeignKey(FacultyProfile, on_delete=models.CASCADE)
-    slot = models.ForeignKey(Slot, on_delete=models.CASCADE)
+    timing = models.ForeignKey(Timing, on_delete=models.CASCADE)
     title = models.CharField(max_length=100)
     created = models.DateTimeField(default=timezone.now)
 
-    class Meta:
-        #Inside a batch, there should be no 2 classes happening at the same time
-        #Maybe this is redundant because the serializers already detect overlapping classes in a batch
-        unique_together = ['slot', 'schedule']
 
     def __str__(self):
-        return f'{self.title} Taught By {self.faculty} ({self.slot})'
+        return f'{self.title} Taught By {self.faculty} ({self.timing})'
+
+    def get_start_time(self):
+        return self.timing.start_time.strftime('%H:%M')
+
+    def get_end_time(self):
+        return self.timing.end_time.strftime('%H:%M')
