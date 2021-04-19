@@ -10,11 +10,11 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 
-import api.serializers as ser
-from base.models import CustomUser,AdminProfile,FacultyProfile,Schedule,SlotInfo
+from . import serializers as ser
+from base.models import CustomUser,AdminProfile,FacultyProfile,Batch,Slot
 from .permissions import IsAdmin
 from .pagination import ModifiedPageNumberPagination
-from .utils import WEEKDAYS
+from base.utils import WEEKDAYS
 
 
 
@@ -68,7 +68,7 @@ class FacultyView(APIView):
 
 
 class SlotView(APIView):
-    """ Handles Creation,Updation & Deletion of Slots a.k.a SlotInfo """
+    """ Handles Creation,Updation & Deletion of Slots """
     serializer_class = ser.CreateSlotSerializer
     permission_classes = [IsAuthenticated,IsAdmin]
 
@@ -76,7 +76,7 @@ class SlotView(APIView):
         data = self.serializer_class(data=request.data,context={'profile':self.request.profile})
         data.is_valid(raise_exception=True)
         created_slot = data.save()
-        data = ser.SlotInfoSerializer(created_slot)
+        data = ser.SlotSerializer(created_slot)
 
         return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
 
@@ -84,25 +84,27 @@ class SlotView(APIView):
 
         """ Make sure that requested slot is owned by current admin """
         try:
-            slot = SlotInfo.objects.get(pk=slot_id,schedule__admin=self.request.profile)
-        except SlotInfo.DoesNotExist:
+            slot = Slot.objects.get(pk=slot_id,batch__admin=self.request.profile)
+        except Slot.DoesNotExist:
             raise ValidationError('Matching Slot does not exist')
 
         data = self.serializer_class(slot,data=request.data, context={'profile': self.request.profile})               
         data.is_valid(raise_exception=True)
         updated_slot = data.save(created = timezone.now())
-        data = ser.SlotInfoSerializer(updated_slot)
+        data = ser.SlotSerializer(updated_slot)
 
         return Response({'status': 1, 'data': data.data}, status=status.HTTP_200_OK)
 
     def delete(self,request,slot_id=None):
         try:
-            slot = SlotInfo.objects.get(pk=slot_id,schedule__admin=self.request.profile)
-        except SlotInfo.DoesNotExist:
+            slot = Slot.objects.get(pk=slot_id,batch__admin=self.request.profile)
+        except Slot.DoesNotExist:
             return Response({'status': 0, 'data': 'Matching Slot does not exist'})
 
-        data = ser.SlotInfoSerializer(slot).data
+        data = ser.SlotSerializer(slot).data
         slot.delete()
+
+        #Garbage collection of unused timing needed.
 
         return Response({'status': 1, 'data': data}, status=status.HTTP_200_OK)
 
@@ -115,16 +117,16 @@ class BatchView(APIView):
     def get(self,request,batch_id=None):
 
         if batch_id is None:
-            all_batches = self.request.profile.schedule_set.all()
+            all_batches = self.request.profile.batch_set.all()
             data = ser.SimpleBatchSerializer(all_batches,many=True)
             return Response({'status':1,'data':data.data})
         try:
-            batch = self.request.profile.schedule_set.get(pk=batch_id)
-        except Schedule.DoesNotExist:
+            batch = self.request.profile.batch_set.get(pk=batch_id)
+        except Batch.DoesNotExist:
             raise ValidationError('Matching batch does not exist')
 
         data = ser.BatchSerializer(batch).data
-        connected_slots = ser.SlotInfoSerializer(batch.connected_slots.all().order_by('slot__start_time'),many=True)
+        connected_slots = ser.SlotSerializer(batch.connected_slots.all().order_by('timing__start_time'),many=True)
 
         #Grouping All slots by their Weekday
         weekday_dict = defaultdict(list)

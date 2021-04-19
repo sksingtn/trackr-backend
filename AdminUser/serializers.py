@@ -5,7 +5,8 @@ from rest_framework import serializers
 from django.db.models import Q
 from django.utils import timezone
 
-from base.models import CustomUser,FacultyProfile,Slot,SlotInfo,Schedule
+from base.models import CustomUser,FacultyProfile,Timing,Slot,Batch
+from .utils import ApiErrors
 
 class SignupSerializer(serializers.ModelSerializer):
 
@@ -64,11 +65,11 @@ class FacultySerializer(serializers.ModelSerializer):
 
 
 
-
-class SlotSerializer(serializers.ModelSerializer):
+#Rename to TimingSer..
+class TimingSerializer(serializers.ModelSerializer):
 
     class Meta:
-        model = Slot
+        model = Timing
         fields = "__all__"
 
 
@@ -76,100 +77,89 @@ class SlotSerializer(serializers.ModelSerializer):
         start,end = itemgetter('start_time','end_time')(validated_data)
 
         if start >= end:
-            raise serializers.ValidationError('start time cant be greater than end time!')
+            raise serializers.ValidationError(ApiErrors.START_TIME_GREATER)
 
         return validated_data
 
 
 class CreateSlotSerializer(serializers.ModelSerializer):
-    slot = SlotSerializer()
+    timing = TimingSerializer()
 
     class Meta:
-        model = SlotInfo
+        model = Slot
         exclude = ['created']
 
     def create(self,validated_data):       
-        validated_data['slot'],_ = Slot.objects.get_or_create(**validated_data.pop('slot'))
+        validated_data['timing'],_ = Timing.objects.get_or_create(**validated_data.pop('timing'))
         
-        return SlotInfo.objects.create(**validated_data)
+        return Slot.objects.create(**validated_data)
 
     def update(self,instance,validated_data):
-        old_slot = instance.slot
-        validated_data['slot'], _ = Slot.objects.get_or_create(**validated_data.pop('slot'))
+        old_timing = instance.timing
+        validated_data['timing'], _ = Timing.objects.get_or_create(**validated_data.pop('timing'))
         
         for key,value in validated_data.items():
             setattr(instance,key,value)        
         instance.save()
 
-        #If slot is changed and old slot timing has no slots. (Garbage Collection)
-        if old_slot != instance.slot and not old_slot.slotinfo_set.exists():
-            old_slot.delete()
+        #If timing is changed and old slot timing has no attached slots. (Garbage Collection)
+        if old_timing != instance.timing and not old_timing.slot_set.exists():
+            old_timing.delete()
 
         return instance
 
 
-    @staticmethod
-    def overlap_checker(queryset,start_time,end_time,weekday):
+    def overlap_checker(self,queryset):
         """
         Tries to find a slot which exists between the given start_time-end_time interval on a given weekday.
         If found returns the first slot.
         """
-        query = lambda time : Q(slot__start_time__lte=time,slot__end_time__gte=time)
+        if self.instance:
+            #Exclude Current Slot from overlap check when updating a slot.
+            queryset = queryset.exclude(pk=self.instance.id)
 
-        result = queryset.filter(slot__weekday=weekday).filter(
-            query(start_time)|query(end_time))
+        query = lambda time : Q(timing__start_time__lte=time,timing__end_time__gte=time)
+
+        result = queryset.filter(timing__weekday=self.weekday).filter(
+            query(self.start_time)|query(self.end_time))
 
         if result:
             return result.first()
+
 
     def validate(self,validated_data):
         
         admin_profile = self.context.get('profile')       
         faculty = validated_data.get('faculty')
-        schedule = validated_data.get('schedule')
+        batch = validated_data.get('batch')
 
         #To diffrentiate b/w creation & updation of slots.
         if self.instance:
-
-            if self.instance.schedule != schedule:
+            if self.instance.batch != batch:
                 raise serializers.ValidationError('Cant Move a slot to another batch!')
         
-        #slot deletion handling in update
 
         #Making Sure that the given Faculty/Schedule is connected to the current Admin
-        for index,item in enumerate([faculty.admin,schedule.admin]):           
+        for index,item in enumerate([faculty.admin,batch.admin]):           
             if item != admin_profile:
-                raise serializers.ValidationError(
-                    f"The requested {'Batch' if index else 'Faculty'} was not {'added' if index else 'invited'} by current admin!")
-
-        #I dont like this, make it explicit
-        (_,start_time),(_,end_time),(_,weekday) = validated_data.get('slot').items()
-        current_slot = [start_time,end_time,weekday]
-
-        #Making Sure That there is no time overlap between slots of the current schedule.
-        queryset = schedule.connected_slots
-
-        #Move this to overlap_checker and encapsulate
-        if self.instance:
-            #Exclude Current Slot from overlap check when updating a slot.
-            queryset = queryset.exclude(pk=self.instance.id)
-
-        overlapped_slots = self.overlap_checker(queryset,*current_slot)
-
-        if overlapped_slots:
-            raise serializers.ValidationError(f'Requested timing overlaps with {overlapped_slots.title} ({overlapped_slots.slot.start_time} - {overlapped_slots.slot.end_time})')
+                raise serializers.ValidationError(ApiErrors.NO_OWNERSHIP.format(resource = 'Batch' if index == 1 else 'Faculty',
+                                                                                action = 'added' if index == 1 else 'invited'))
 
 
-        #Making Sure that a faculty is not assigned classes in different batches at overlapping times.
-        queryset = SlotInfo.objects.filter(faculty=faculty)
-        if self.instance:
-            #Exclude Current Slot Timing from consideration when updating a slot.
-            queryset = queryset.exclude(pk=self.instance.id)
+        self.start_time,self.end_time,self.weekday = itemgetter('start_time','end_time','weekday')(validated_data.get('timing'))
 
-        multiple_slots = self.overlap_checker(queryset,*current_slot)
-        
-        if multiple_slots:
-            raise serializers.ValidationError(f'{faculty.name} already has a class in {multiple_slots.schedule.title} ({multiple_slots.slot.start_time} - {multiple_slots.slot.end_time})')
+        #Checking for overlaps in current batch for the requested timing. 
+        overlapped_slot = self.overlap_checker(queryset=batch.connected_slots)
+        if overlapped_slot:
+            raise serializers.ValidationError(ApiErrors.SLOT_OVERLAP.format(title=overlapped_slot.title,
+                start_time=overlapped_slot.get_start_time(),end_time=overlapped_slot.get_end_time()))
+
+
+        #Checking if faculty already has a class at overlapping time in a different batch.
+        overlapped_slot = self.overlap_checker(queryset = Slot.objects.filter(faculty=faculty))       
+        if overlapped_slot:
+            raise serializers.ValidationError(ApiErrors.FACULTY_SLOT_OVERLAP.format(faculty=faculty.name,batch=overlapped_slot.batch.title,
+                        start_time=overlapped_slot.get_start_time(),end_time=overlapped_slot.get_end_time()))
       
         
         return validated_data
@@ -177,7 +167,7 @@ class CreateSlotSerializer(serializers.ModelSerializer):
 
 class BatchSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Schedule
+        model = Batch
         fields = ['id','title' ,'isActive', 'totalStudents',
                    'verifiedFaculties', 'totalClasses','created']
 
@@ -195,11 +185,11 @@ class BatchSerializer(serializers.ModelSerializer):
         return res 
 
     def get_totalStudents(self,instance):
-        return instance.students.count()
+        return instance.student_profiles.count()
 
     def get_verifiedFaculties(self,instance):
         #Could also use self.instance.connected_slots.distinct('faculty')
-        total_faculties = set(FacultyProfile.objects.filter(slotinfo__schedule=instance))     
+        total_faculties = set(FacultyProfile.objects.filter(slot__batch=instance))     
         verifiedFaculties = map(lambda profile: profile.status == "VERIFIED",total_faculties)                
         return f'{sum(verifiedFaculties)}/{len(total_faculties)}'
 
@@ -207,9 +197,10 @@ class BatchSerializer(serializers.ModelSerializer):
         return instance.connected_slots.count()
 
 
-class SlotInfoSerializer(serializers.ModelSerializer):
+#Can it be merged into the createslotserializer?
+class SlotSerializer(serializers.ModelSerializer):
     class Meta:
-        model = SlotInfo
+        model = Slot
         fields = ['id','title', 'startTime', 'endTime',
                   'duration', 'created', 'facultyName','weekday']
 
@@ -218,18 +209,18 @@ class SlotInfoSerializer(serializers.ModelSerializer):
     duration = serializers.SerializerMethodField()
     created = serializers.SerializerMethodField()
     facultyName = serializers.CharField(source='faculty.name')
-    weekday = serializers.CharField(source='slot.weekday')
+    weekday = serializers.CharField(source='timing.weekday')
 
     def get_startTime(self,instance):
-        return instance.slot.start_time.strftime('%I:%M %p')
+        return instance.timing.start_time.strftime('%I:%M %p')
 
     def get_endTime(self, instance):
-        return instance.slot.end_time.strftime('%I:%M %p')
+        return instance.timing.end_time.strftime('%I:%M %p')
 
     def get_duration(self,instance):
         #Cant subtract time from time so combined both with common date
-        startTime = datetime.combine(date.today(), instance.slot.start_time)
-        endTime = datetime.combine(date.today(), instance.slot.end_time)
+        startTime = datetime.combine(date.today(), instance.timing.start_time)
+        endTime = datetime.combine(date.today(), instance.timing.end_time)
         return f'{int((endTime-startTime).total_seconds()//60)} Mins'
 
     def get_created(self,instance):
@@ -252,13 +243,13 @@ class SlotInfoSerializer(serializers.ModelSerializer):
         
 class SimpleBatchSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Schedule
+        model = Batch
         fields = ['title', 'id']
         read_only_fields = ['id','active']
 
     def validate_title(self,title):
         admin_profile = self.context.get('profile')
-        if admin_profile.schedule_set.filter(title__iexact=title).exists():
+        if admin_profile.batch_set.filter(title__iexact=title).exists():
             raise serializers.ValidationError('Batch with same title already exists!')
 
         return title
