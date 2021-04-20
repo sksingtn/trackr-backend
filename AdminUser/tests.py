@@ -183,14 +183,14 @@ class AdminSlotHandling(TestCase):
             #All possible pattern of intervals that overlap with 08:00 - 09:00.
             for start_time,end_time in (('07:00','08:00'),('07:30','08:30'),('08:00','08:30'),
                                         ('08:30','09:00'),('08:30','09:30'),('09:00','09:30'),
-                                        ('08:00','09:00'),('08:15','08:45')):
+                                        ('08:00','09:00'),('08:15','08:45'),('07:00','10:00')): 
 
                 postData = {'title':'admin1_slot2','batch':batch.pk,'faculty':self.mainFaculty.pk,
                             'timing':{'weekday':'Monday','start_time':start_time,'end_time':end_time}}
 
                 status_code,response = self.create_request_object(postData)
 
-                self.assertEqual(status_code,400)
+                self.assertEqual(status_code,400,end_time)
                 self.assertEqual(response.get("status"),0)
 
                 if iteration == 1:
@@ -260,12 +260,34 @@ class AdminSlotHandling(TestCase):
         postData = {'faculty':newFaculty.pk,'batch':self.mainBatch.pk,'title':'admin1_slot_name_changed',
                     'timing':{'start_time':'20:00','end_time':'21:00','weekday':'Tuesday'}}
 
+
+        #Should'nt clash with classes on same time but different weekdays.
+        Slot.objects.create(batch=self.mainBatch,faculty=self.mainFaculty,title='admin1_slot2',
+                                timing=Timing.objects.create(start_time=time(hour=20),end_time=time(hour=21),weekday='Wednesday'))
+
+
         status_code,response = self.create_request_object(postData,method="put",slot_id=self.mainSlot.pk)        
         updatedSlot = Slot.objects.get(pk=self.mainSlot.pk)
-        
-        self.assertEqual(Slot.objects.all().count(),1)
+
+        expectedResponse = {
+            "status": 1,
+            "data": {
+                "title": "admin1_slot_name_changed",
+                "startTime": "08:00 PM",
+                "endTime": "09:00 PM",
+                "duration": "60 Mins",
+                "facultyName": "admin1_faculty2",
+                "weekday": "Tuesday"
+            }
+        }
+
         self.assertEqual(status_code,200)
-        self.assertEqual(response.get("status"),1)    
+        self.assertIsNotNone(response.get('data'))
+        response['data'].pop('id',None)
+        response['data'].pop('created',None)
+        self.assertDictEqual(expectedResponse,response)
+        
+        self.assertEqual(Slot.objects.all().count(),2)  
         self.assertEqual((updatedSlot.timing.start_time,updatedSlot.timing.end_time,updatedSlot.timing.weekday),
                          (time(hour=20),time(hour=21),'Tuesday'),'Incorrect values after update')   
         self.assertEqual(updatedSlot.faculty,newFaculty)
@@ -281,48 +303,34 @@ class AdminSlotHandling(TestCase):
         Test of simple slot creation.
         """
 
+        #Should'nt clash with classes on same time but different weekdays.
+        Slot.objects.create(batch=self.mainBatch,faculty=self.mainFaculty,title='admin1_slot2',
+                                timing=Timing.objects.create(start_time=time(hour=20),end_time=time(hour=21),weekday='Tuesday'))
+
         postData = {'faculty':self.mainFaculty.pk,'batch':self.mainBatch.pk,'title':'admin1_slot2',
                     'timing':{'start_time':'20:00','end_time':'21:00','weekday':'Monday'}}
 
         status_code,response = self.create_request_object(postData) 
-        
+
+        expectedResponse = {
+            "status": 1,
+            "data": {
+                "title": "admin1_slot2",
+                "startTime": "08:00 PM",
+                "endTime": "09:00 PM",
+                "duration": "60 Mins",
+                "facultyName": "admin1_faculty",
+                "weekday": "Monday"
+            }
+        }
+
         self.assertEqual(status_code,201)
-        self.assertEqual(response.get('status'),1)
-        self.assertEqual(Slot.objects.all().count(),2)
+        self.assertIsNotNone(response.get('data'))
+        response['data'].pop('id', None)
+        response['data'].pop('created', None)
+        self.assertDictEqual(expectedResponse, response)
+
+
+        self.assertEqual(Slot.objects.all().count(),3)
 
         
-
-        
-        
-
-
-        
-
-        
-
-
-
-
-
-
-
-                                
-
-        
-        
-
-
-
-
-
-        
-    
-
-        
-        
-        
-
- 
-        
-
-

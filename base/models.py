@@ -4,6 +4,7 @@ from django.db import models
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
+from django.db.models import Q
 
 from AdminUser.models import AdminProfile
 from FacultyUser.models import FacultyProfile
@@ -88,6 +89,30 @@ class Timing(models.Model):
         return f'{self.start_time} - {self.end_time} ({self.weekday})'
 
 
+
+class SlotQuerySet(models.QuerySet):
+
+    def find_overlap(self,interval : tuple,ignore):
+        """
+        Tries to find a slot which exists between the given start_time-end_time interval.
+        If found returns the first slot.
+        """
+        if ignore:
+            self = self.exclude(pk=ignore)
+
+        start_time,end_time = interval
+        edgeCase  = Q(timing__start_time__lte=start_time,timing__end_time__gte=end_time)
+
+        return self.filter(Q(timing__start_time__range=interval)|
+                                 Q(timing__end_time__range=interval)|edgeCase).first()
+
+
+class SlotManager(models.Manager):
+
+    def get_queryset(self):
+        return SlotQuerySet(model=self.model, using=self._db)
+    
+
 #Add a last notified field (what to do with it in update?)
 class Slot(models.Model):
     batch = models.ForeignKey(Batch, related_name='connected_slots', on_delete=models.CASCADE)
@@ -95,6 +120,8 @@ class Slot(models.Model):
     timing = models.ForeignKey(Timing, on_delete=models.CASCADE)
     title = models.CharField(max_length=100)
     created = models.DateTimeField(default=timezone.now)
+
+    objects = SlotManager()
 
 
     def __str__(self):
