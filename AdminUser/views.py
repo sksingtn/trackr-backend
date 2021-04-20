@@ -69,20 +69,18 @@ class FacultyView(APIView):
 
 class SlotView(APIView):
     """ Handles Creation,Updation & Deletion of Slots """
-    serializer_class = ser.CreateSlotSerializer
+    serializer_class = ser.SlotSerializer
     permission_classes = [IsAuthenticated,IsAdmin]
 
     def post(self,request,slot_id=None):
         data = self.serializer_class(data=request.data,context={'profile':self.request.profile})
         data.is_valid(raise_exception=True)
-        created_slot = data.save()
-        data = ser.SlotSerializer(created_slot)
-
+        data.save()
         return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
 
     def put(self, request, slot_id=None):
 
-        """ Make sure that requested slot is owned by current admin """
+        #Making sure that requested slot is owned by current admin.
         try:
             slot = Slot.objects.get(pk=slot_id,batch__admin=self.request.profile)
         except Slot.DoesNotExist:
@@ -90,9 +88,7 @@ class SlotView(APIView):
 
         data = self.serializer_class(slot,data=request.data, context={'profile': self.request.profile})               
         data.is_valid(raise_exception=True)
-        updated_slot = data.save(created = timezone.now())
-        data = ser.SlotSerializer(updated_slot)
-
+        data.save(created = timezone.now())
         return Response({'status': 1, 'data': data.data}, status=status.HTTP_200_OK)
 
     def delete(self,request,slot_id=None):
@@ -101,7 +97,7 @@ class SlotView(APIView):
         except Slot.DoesNotExist:
             return Response({'status': 0, 'data': 'Matching Slot does not exist'})
 
-        data = ser.SlotSerializer(slot).data
+        data = self.serializer_class(slot).data
         slot.delete()
 
         #Garbage collection of unused timing needed.
@@ -126,7 +122,9 @@ class BatchView(APIView):
             raise ValidationError('Matching batch does not exist')
 
         data = ser.BatchSerializer(batch).data
-        connected_slots = ser.SlotSerializer(batch.connected_slots.all().order_by('timing__start_time'),many=True)
+        #Performance Improvement with select_related.
+        connected_slots = ser.SlotSerializer(batch.connected_slots.all().select_related('timing','faculty')\
+                                             .order_by('timing__start_time'),many=True)
 
         #Grouping All slots by their Weekday
         weekday_dict = defaultdict(list)
