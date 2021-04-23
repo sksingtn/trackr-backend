@@ -1,11 +1,11 @@
 from rest_framework.permissions import BasePermission
-from .models import AdminProfile
+from .models import StudentProfile
 
-#Maybe subclass isAuthenticated?
-class IsAdmin(BasePermission):
+
+class IsStudent(BasePermission):
     def has_permission(self, request, view):
         try:
-            profile = AdminProfile.objects.get(user=request.user)
+            profile = StudentProfile.objects.get(user=request.user)
             request.profile = profile
             return True
         except:

@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date,datetime,timedelta
+
 
 from django.db import models
 from django.contrib.auth.base_user import BaseUserManager
@@ -8,6 +9,8 @@ from django.db.models import Q
 
 from AdminUser.models import AdminProfile
 from FacultyUser.models import FacultyProfile
+from .managers import SlotManager
+from .utils import WEEKDAYS
 
 
 class CustomUserManager(BaseUserManager):
@@ -72,46 +75,75 @@ class Timing(models.Model):
     """This is not attached to a user to ease the notifier function,
         because this way we can query for an incoming slot and it will give us
         details for upcoming classes of every batch of every user"""
-    weekdays = (
-        ("Sunday", "Sunday"),
-        ("Monday", "Monday"),
-        ("Tuesday", "Tuesday"),
-        ("Wednesday", "Wednesday"),
-        ("Thursday", "Thursday"),
-        ("Friday", "Friday"),
-        ("Saturday", "Saturday")
+    weekdays = (       
+        (0, "Monday"),
+        (1, "Tuesday"),
+        (2, "Wednesday"),
+        (3, "Thursday"),
+        (4, "Friday"),
+        (5, "Saturday"),
+        (6, "Sunday")
     )
     start_time = models.TimeField()
     end_time = models.TimeField()
-    weekday = models.CharField(max_length=100, choices=weekdays)
+    weekday = models.IntegerField(choices=weekdays)
+
 
     def __str__(self):
         return f'{self.start_time} - {self.end_time} ({self.weekday})'
 
+    def get_weekday_string(self):
+        return WEEKDAYS[self.weekday]
 
+    def get_start_time(self):
+        return self.start_time.strftime('%I:%M %p')
 
-class SlotQuerySet(models.QuerySet):
+    def get_end_time(self):
+        return self.end_time.strftime('%I:%M %p')
+  
+    def get_duration_in_seconds(self):
+        #Cant subtract time from time so combined both with a common date.
+        commonDate = date(1999, 6, 21)
+        startTime = datetime.combine(commonDate, self.start_time)
+        endTime = datetime.combine(commonDate, self.end_time)
+        return (endTime-startTime).total_seconds()
 
-    def find_overlap(self,interval : tuple,ignore):
-        """
-        Tries to find a slot which exists between the given start_time-end_time interval.
-        If found returns the first slot.
-        """
-        if ignore:
-            self = self.exclude(pk=ignore)
+    def get_duration(self):
+        total_seconds = self.get_duration_in_seconds()
+        return f'{int(total_seconds//60)} Mins'
 
-        start_time,end_time = interval
-        edgeCase  = Q(timing__start_time__lte=start_time,timing__end_time__gte=end_time)
+    def get_elapsed_seconds(self,currentDateTime):
+        currentDateTime = currentDateTime.replace(tzinfo=None)
+        slotStartTime = datetime.combine(currentDateTime.date(),self.start_time)
+        slotEndTime = datetime.combine(currentDateTime.date(),self.end_time)
 
-        return self.filter(Q(timing__start_time__range=interval)|
-                                 Q(timing__end_time__range=interval)|edgeCase).first()
+        if currentDateTime.weekday() != self.weekday or (not slotStartTime <= currentDateTime <= slotEndTime):
+            raise Exception('Slot does not coincide with current time!')
 
+        elapsedSeconds = (currentDateTime - slotStartTime).total_seconds()
 
-class SlotManager(models.Manager):
+        return int(elapsedSeconds)
 
-    def get_queryset(self):
-        return SlotQuerySet(model=self.model, using=self._db)
-    
+    def get_elapsed(self, currentDateTime):
+        currentDateTime = currentDateTime.replace(tzinfo=None)
+        currentDate = currentDateTime.date()
+
+        dayOffset = self.weekday - currentDateTime.weekday()
+        buildDate = currentDate + timedelta(days=dayOffset)
+
+        if dayOffset < 0 or (dayOffset == 0 and datetime.combine(currentDate,self.end_time) < currentDateTime):
+            time = self.end_time
+        elif dayOffset > 0 or (dayOffset == 0 and datetime.combine(currentDate,self.start_time) > currentDateTime):
+            time = self.start_time
+        else:
+            raise Exception('Slot coincides with current time!')
+
+        buildDateTime = datetime.combine(buildDate,time)
+
+        total_seconds = (currentDateTime-buildDateTime).total_seconds()
+
+        return int(abs(total_seconds))
+
 
 #Add a last notified field (what to do with it in update?)
 class Slot(models.Model):
@@ -119,16 +151,29 @@ class Slot(models.Model):
     faculty = models.ForeignKey(FacultyProfile, on_delete=models.CASCADE)
     timing = models.ForeignKey(Timing, on_delete=models.CASCADE)
     title = models.CharField(max_length=100)
-    created = models.DateTimeField(default=timezone.now)
+    #Rename to last_activity
+    created = models.DateTimeField(default=timezone.localtime)
 
     objects = SlotManager()
 
 
+    def get_last_activity(self):
+        difference = (timezone.localtime()-self.created)
+        total_seconds = difference.total_seconds()
+
+        if difference.days:
+            value = f"{difference.days} day{'s' if difference.days > 1 else ''}"
+        elif total_seconds//3600:
+            hours = total_seconds//3600
+            value = f"{int(hours)} hour{'s' if hours > 1 else ''}"
+        elif total_seconds//60:
+            minutes = total_seconds//60
+            value = f"{int(minutes)} minute{'s' if minutes > 1 else ''}"
+        else:
+            value = f'{int(total_seconds)} seconds'
+
+        return f'{value} ago'
+
     def __str__(self):
         return f'{self.title} Taught By {self.faculty} ({self.timing})'
 
-    def get_start_time(self):
-        return self.timing.start_time.strftime('%H:%M')
-
-    def get_end_time(self):
-        return self.timing.end_time.strftime('%H:%M')

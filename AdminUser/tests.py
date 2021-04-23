@@ -72,7 +72,7 @@ class AdminSignupInvite(TestCase):
 
 class AdminSlotHandling(TestCase):
     
-    
+    #Clarify about testcase design
     def setUp(self):
         adminPostData = {'email':'admin1@test.com','password':'password',
                         'name':'admin1'}
@@ -82,7 +82,7 @@ class AdminSlotHandling(TestCase):
         self.mainBatch = Batch.objects.create(title="admin1_batch",admin=self.mainAdmin)
         self.mainFaculty = FacultyProfile.objects.create(name="admin1_faculty",admin=self.mainAdmin)
         self.mainSlot = Slot.objects.create(batch=self.mainBatch,faculty=self.mainFaculty,title='admin1_slot1',
-                                timing=Timing.objects.create(start_time=time(hour=8),end_time=time(hour=9),weekday='Monday'))
+                                timing=Timing.objects.create(start_time=time(hour=8),end_time=time(hour=9),weekday=0))
 
 
 
@@ -110,7 +110,7 @@ class AdminSlotHandling(TestCase):
         Slot can't be created if start time is greater than end time.
         """
         postData = { 'title':'admin1_slot2','batch':self.mainBatch.pk,'faculty':self.mainFaculty.pk,
-                    'timing':{'start_time':'20:00','end_time':'18:00','weekday':'Tuesday'}}
+                    'timing':{'start_time':'20:00','end_time':'18:00','weekday':1}}
         status_code,response = self.create_request_object(postData)        
         self.assertEqual(status_code,400)
         self.assertEqual(response.get('status'),0)
@@ -123,7 +123,7 @@ class AdminSlotHandling(TestCase):
         Slot can't be created if time interval crosses into next day.
         """
         postData = {'title':'admin1_slot2','batch':self.mainBatch.pk,'faculty':self.mainFaculty.pk,
-                    'timing':{'start_time':'20:00','end_time':'02:00','weekday':'Tuesday'}}
+                    'timing':{'start_time':'20:00','end_time':'02:00','weekday':1}}
         status_code,response = self.create_request_object(postData)        
         self.assertEqual(status_code,400)
         self.assertEqual(response.get('status'),0)
@@ -141,7 +141,7 @@ class AdminSlotHandling(TestCase):
         otherFaculty = FacultyProfile.objects.create(name="admin2_faculty",admin=self.otherAdmin)
 
         postData = {'title':'admin1_slot2','batch':self.mainBatch.pk,'faculty':otherFaculty.pk,
-                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':'Tuesday'}}
+                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':1}}
         status_code,response = self.create_request_object(postData)        
         self.assertEqual(status_code,400)
         self.assertEqual(response.get('status'),0)
@@ -159,7 +159,7 @@ class AdminSlotHandling(TestCase):
         otherBatch = Batch.objects.create(title="admin2_batch",admin=self.otherAdmin)
 
         postData = {'title':'admin1_slot2','batch':otherBatch.pk,'faculty':self.mainFaculty.pk,
-                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':'Tuesday'}}
+                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':1}}
         status_code,response = self.create_request_object(postData)        
         self.assertEqual(status_code,400)
         self.assertEqual(response.get('status'),0)
@@ -186,7 +186,7 @@ class AdminSlotHandling(TestCase):
                                         ('08:00','09:00'),('08:15','08:45'),('07:00','10:00')): 
 
                 postData = {'title':'admin1_slot2','batch':batch.pk,'faculty':self.mainFaculty.pk,
-                            'timing':{'weekday':'Monday','start_time':start_time,'end_time':end_time}}
+                            'timing':{'weekday':0,'start_time':start_time,'end_time':end_time}}
 
                 status_code,response = self.create_request_object(postData)
 
@@ -195,11 +195,12 @@ class AdminSlotHandling(TestCase):
 
                 if iteration == 1:
                     self.assertEqual(response.get('data'),Error.SLOT_OVERLAP.format(title=self.mainSlot.title,
-                    start_time=self.mainSlot.get_start_time(),end_time=self.mainSlot.get_end_time()))
+                    start_time=self.mainSlot.timing.get_start_time(),end_time=self.mainSlot.timing.get_end_time()))
 
                 elif iteration == 2:
                     self.assertEqual(response.get('data'),Error.FACULTY_SLOT_OVERLAP.format(faculty=self.mainFaculty.name,
-                    batch=self.mainBatch.title,start_time=self.mainSlot.get_start_time(),end_time=self.mainSlot.get_end_time()))
+                    batch=self.mainBatch.title,start_time=self.mainSlot.timing.get_start_time(),
+                    end_time=self.mainSlot.timing.get_end_time()))
        
 
         self.assertEqual(Slot.objects.count(),1)
@@ -221,12 +222,12 @@ class AdminSlotHandling(TestCase):
         for index,(batch,faculty) in enumerate(((self.mainBatch,newFaculty),(newBatch,self.mainFaculty)),start=2):
 
             testSlot = Slot.objects.create(batch=batch,faculty=faculty,title=f'admin1_slot{index}',
-                                    timing=Timing.objects.create(start_time='20:00',end_time='21:00',weekday='Monday'))
+                                    timing=Timing.objects.create(start_time='20:00',end_time='21:00',weekday=0))
 
             self.assertEqual(Slot.objects.all().count(),index)
 
             postData = {'faculty':faculty.pk,'batch':batch.pk,'title':'admin1_slot2_moved',
-                        'timing':{'start_time':'08:30','end_time':'09:30','weekday':'Monday'}}
+                        'timing':{'start_time':'08:30','end_time':'09:30','weekday':0}}
             status_code,response = self.create_request_object(postData,method="put",slot_id=testSlot.pk) 
 
             self.assertEqual(status_code,400)
@@ -240,14 +241,14 @@ class AdminSlotHandling(TestCase):
         """
 
         postData = {'title':'admin1_slot2','batch':self.mainBatch.pk,'faculty':self.mainFaculty.pk,
-                    'timing':{'weekday':'Monday','start_time':'08:30','end_time':'09:30'}}
+                    'timing':{'weekday':0,'start_time':'08:30','end_time':'09:30'}}
 
         status_code,response = self.create_request_object(postData,method="put",slot_id=self.mainSlot.pk) 
         updatedSlot = Slot.objects.get(pk=self.mainSlot.pk)
         self.assertEqual(status_code,200)
         self.assertEqual(response.get('status'),1)
         self.assertEqual((updatedSlot.timing.start_time,updatedSlot.timing.end_time,updatedSlot.timing.weekday),
-                         (time(hour=8,minute=30),time(hour=9,minute=30),'Monday'),'Incorrect values after update')  
+                         (time(hour=8,minute=30),time(hour=9,minute=30),0),'Incorrect values after update')  
         self.assertEqual(Slot.objects.all().count(),1)
 
 
@@ -258,12 +259,12 @@ class AdminSlotHandling(TestCase):
         originalTiming = self.mainSlot.timing.pk
         newFaculty = FacultyProfile.objects.create(name="admin1_faculty2",admin=self.mainAdmin)
         postData = {'faculty':newFaculty.pk,'batch':self.mainBatch.pk,'title':'admin1_slot_name_changed',
-                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':'Tuesday'}}
+                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':1}}
 
 
         #Should'nt clash with classes on same time but different weekdays.
         Slot.objects.create(batch=self.mainBatch,faculty=self.mainFaculty,title='admin1_slot2',
-                                timing=Timing.objects.create(start_time=time(hour=20),end_time=time(hour=21),weekday='Wednesday'))
+                                timing=Timing.objects.create(start_time=time(hour=20),end_time=time(hour=21),weekday=2))
 
 
         status_code,response = self.create_request_object(postData,method="put",slot_id=self.mainSlot.pk)        
@@ -289,7 +290,7 @@ class AdminSlotHandling(TestCase):
         
         self.assertEqual(Slot.objects.all().count(),2)  
         self.assertEqual((updatedSlot.timing.start_time,updatedSlot.timing.end_time,updatedSlot.timing.weekday),
-                         (time(hour=20),time(hour=21),'Tuesday'),'Incorrect values after update')   
+                         (time(hour=20),time(hour=21),1),'Incorrect values after update')   
         self.assertEqual(updatedSlot.faculty,newFaculty)
         self.assertEqual(updatedSlot.title,'admin1_slot_name_changed')
 
@@ -305,10 +306,10 @@ class AdminSlotHandling(TestCase):
 
         #Should'nt clash with classes on same time but different weekdays.
         Slot.objects.create(batch=self.mainBatch,faculty=self.mainFaculty,title='admin1_slot2',
-                                timing=Timing.objects.create(start_time=time(hour=20),end_time=time(hour=21),weekday='Tuesday'))
+                                timing=Timing.objects.create(start_time=time(hour=20),end_time=time(hour=21),weekday=1))
 
         postData = {'faculty':self.mainFaculty.pk,'batch':self.mainBatch.pk,'title':'admin1_slot2',
-                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':'Monday'}}
+                    'timing':{'start_time':'20:00','end_time':'21:00','weekday':0}}
 
         status_code,response = self.create_request_object(postData) 
 
