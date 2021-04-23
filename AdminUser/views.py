@@ -88,7 +88,7 @@ class SlotView(APIView):
 
         data = self.serializer_class(slot,data=request.data, context={'profile': self.request.profile})               
         data.is_valid(raise_exception=True)
-        data.save(created = timezone.now())
+        data.save(created = timezone.localtime())
         return Response({'status': 1, 'data': data.data}, status=status.HTTP_200_OK)
 
     def delete(self,request,slot_id=None):
@@ -121,24 +121,14 @@ class BatchView(APIView):
         except Batch.DoesNotExist:
             raise ValidationError('Matching batch does not exist')
 
-        data = ser.BatchSerializer(batch).data
-        #Performance Improvement with select_related.
-        connected_slots = ser.SlotSerializer(batch.connected_slots.all().select_related('timing','faculty')\
-                                             .order_by('timing__start_time'),many=True)
+        batchData = ser.BatchSerializer(batch).data
 
-        #Grouping All slots by their Weekday
-        weekday_dict = defaultdict(list)
-        for item in connected_slots.data:
-            weekday_dict[item.pop('weekday')].append(item)
+        all_slots = batch.connected_slots.select_related('timing', 'faculty')\
+                    .order_by('timing__start_time')
+        
+        jsonData = all_slots.serialize_and_group_by_weekday(serializer=ser.SlotSerializer)
 
-        #Fill the empty weekdays with empty list.
-        remaining = ({}.fromkeys(set(WEEKDAYS).difference(weekday_dict.keys()),[]))
-        weekday_dict.update(remaining)
-
-        #Sort them by weekday
-        weekday_dict = dict(sorted(weekday_dict.items(),key=lambda x : WEEKDAYS.index(x[0])))
-
-        return Response({'status':1,'data':{**data,"weekdayData":weekday_dict}},status=status.HTTP_200_OK)
+        return Response({'status': 1, 'data': {**batchData, "weekdayData": jsonData}}, status=status.HTTP_200_OK)
 
     def post(self, request, *args, **kwargs):
         if kwargs.get('batch_id'):

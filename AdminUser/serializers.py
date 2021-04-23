@@ -1,12 +1,11 @@
 from operator import itemgetter
-from datetime import datetime,date
 
 from rest_framework import serializers
 from rest_framework.serializers import ValidationError
-from django.db.models import Q
-from django.utils import timezone
+from django.db.models import Q  
 
-from base.models import CustomUser,FacultyProfile,Timing,Slot,Batch
+from base.models import Timing, Slot, Batch, CustomUser
+from FacultyUser.models import FacultyProfile 
 from .utils import ApiErrors
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -80,6 +79,7 @@ class TimingSerializer(serializers.ModelSerializer):
         return validated_data
 
 #Used for both read/write.
+#Make it a base serializer for student and admin maybe?
 class SlotSerializer(serializers.ModelSerializer):
 
     class Meta:
@@ -95,42 +95,13 @@ class SlotSerializer(serializers.ModelSerializer):
 
     timing = TimingSerializer(write_only=True)
 
-    #Read Only Fields and methods
-    startTime = serializers.SerializerMethodField(read_only=True)
-    endTime = serializers.SerializerMethodField(read_only=True)
-    duration = serializers.SerializerMethodField(read_only=True)
-    created = serializers.SerializerMethodField(read_only=True)
+    #Read Only Fields
+    startTime = serializers.CharField(read_only=True,source='timing.get_start_time')
+    endTime = serializers.CharField(read_only=True,source='timing.get_end_time')
+    weekday = serializers.CharField(read_only=True,source='timing.get_weekday_string')
+    duration = serializers.CharField(read_only=True,source='timing.get_duration')
+    created = serializers.CharField(read_only=True, source='get_last_activity')
     facultyName = serializers.CharField(source='faculty.name', read_only=True)
-    weekday = serializers.CharField(source='timing.weekday',read_only=True)
-
-    def get_startTime(self, instance):
-        return instance.timing.start_time.strftime('%I:%M %p')
-
-    def get_endTime(self, instance):
-        return instance.timing.end_time.strftime('%I:%M %p')
-
-    def get_duration(self, instance):
-        #Cant subtract time from time so combined both with common date
-        startTime = datetime.combine(date.today(), instance.timing.start_time)
-        endTime = datetime.combine(date.today(), instance.timing.end_time)
-        return f'{int((endTime-startTime).total_seconds()//60)} Mins'
-
-    def get_created(self, instance):
-        difference = (timezone.now()-instance.created)
-        total_seconds = difference.total_seconds()
-
-        if difference.days:
-            value = f"{difference.days} day{'s' if difference.days > 1 else ''}"
-        elif total_seconds//3600:
-            hours = total_seconds//3600
-            value = f"{int(hours)} hour{'s' if hours > 1 else ''}"
-        elif total_seconds//60:
-            minutes = total_seconds//60
-            value = f"{int(minutes)} minute{'s' if minutes > 1 else ''}"
-        else:
-            value = f'{int(total_seconds)} seconds'
-
-        return f'{value} ago'
 
 
     #Write Only methods.
@@ -174,18 +145,24 @@ class SlotSerializer(serializers.ModelSerializer):
         self.start_time,self.end_time,self.weekday = itemgetter('start_time','end_time','weekday')(validated_data.get('timing'))
 
         all_slots = Slot.objects.filter(timing__weekday=self.weekday).filter(Q(faculty=faculty)|Q(batch=batch))
-        overlapped_slot = all_slots.find_overlap(interval=(self.start_time,self.end_time),ignore=self.instance and self.instance.pk)
+        if self.instance:
+            all_slots = all_slots.exclude(pk=self.instance.pk)
+
+        overlapped_slot = all_slots.detect_overlap(interval=(self.start_time,self.end_time))
 
 
         if overlapped_slot is not None:
+            start_time = overlapped_slot.timing.get_start_time()
+            end_time = overlapped_slot.timing.get_end_time()
+
             #If overlap is with a slot in current batch.
             if overlapped_slot.batch == batch:
                 raise ValidationError(ApiErrors.SLOT_OVERLAP.format(title=overlapped_slot.title,
-                    start_time=overlapped_slot.get_start_time(),end_time=overlapped_slot.get_end_time()))
+                                     start_time=start_time,end_time=end_time))
             #If overlap is with a slot in another batch which is taught by the requested faculty.
             else:
                 raise ValidationError(ApiErrors.FACULTY_SLOT_OVERLAP.format(faculty=faculty.name,batch=overlapped_slot.batch.title,
-                    start_time=overlapped_slot.get_start_time(),end_time=overlapped_slot.get_end_time()))
+                                      start_time=start_time,end_time=end_time))
         
         return validated_data
 

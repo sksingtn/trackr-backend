@@ -8,9 +8,9 @@ import debug_toolbar
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/admin-',include('AdminUser.urls')),
+    path('api/faculty-', include('FacultyUser.urls')),
+    path('api/student-', include('StudentUser.urls')),
     path('__debug__/', include(debug_toolbar.urls)),
-    #re_path(r'^api/faculty\-.*',include('FacultyUser.urls')),
-    #re_path(r'^api/student\-.*',include('StudentUser.urls'))
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

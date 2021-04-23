@@ -5,7 +5,7 @@ from rest_framework.status import HTTP_400_BAD_REQUEST
 
 
 
-WEEKDAYS = ['Sunday', 'Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday']
+WEEKDAYS = ['Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday','Sunday']
 
 def custom_exception_handler(exc, context):
     # Call REST framework's default exception handler first,
