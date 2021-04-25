@@ -1,6 +1,5 @@
 from datetime import date,datetime,timedelta
 
-
 from django.db import models
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
@@ -62,7 +61,7 @@ class CustomUser(AbstractUser):
 class Batch(models.Model):
     title = models.CharField(max_length=200)
     admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE)
-    #What happens when disabled?
+    #What happens when disabled? No notifications to descendants
     active = models.BooleanField(default=True)
     created = models.DateField(default=date.today)
 

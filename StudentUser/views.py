@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from rest_framework import status
 from django.utils import timezone
 
@@ -17,9 +18,21 @@ class TimelineView(APIView):
 
     def get(self, request):
 
+        batch = request.profile.batch
+
+        if not batch.admin.active:
+            raise ValidationError('Admin has paused the classes for all batches!')
+
+        if not batch.active:
+            raise ValidationError('Admin has paused the classes for this batch!')
+
         currentDateTime = timezone.localtime()
         all_slots = request.profile.batch.connected_slots.select_related(
             'timing', 'faculty')
+
+        if not all_slots:
+            raise ValidationError('No classes assigned by the Admin yet!')
+
 
         previousSlot, ongoingSlot, nextSlot = all_slots.find_previous_ongoing_next_slot(
             currentDateTime=currentDateTime)
@@ -40,4 +53,4 @@ class TimelineView(APIView):
         jsonData = all_slots.order_by('timing__start_time').serialize_and_group_by_weekday(
             serializer=StudentSlotSerializer)
 
-        return Response({'timelineData': timelineData, 'weekdayData': jsonData}, status=status.HTTP_200_OK)
+        return Response({ 'status':1 , 'data':{'timelineData': timelineData, 'weekdayData': jsonData}}, status=status.HTTP_200_OK)

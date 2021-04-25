@@ -80,6 +80,7 @@ class SlotView(APIView):
 
     def put(self, request, slot_id=None):
 
+        #Move it to a common class method!
         #Making sure that requested slot is owned by current admin.
         try:
             slot = Slot.objects.get(pk=slot_id,batch__admin=self.request.profile)
@@ -138,6 +139,44 @@ class BatchView(APIView):
         data.is_valid(raise_exception=True)
         data.save(admin=self.request.profile)
         return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
+
+
+
+class ToggleView(APIView):
+    permission_classes = [IsAuthenticated,IsAdmin]
+
+    def get_batch(self,batch_id):
+        try:
+            batch = self.request.profile.batch_set.get(pk=batch_id)
+            return batch
+        except Batch.DoesNotExist:
+            raise ValidationError('Matching batch does not exist')
+
+    @staticmethod
+    def toggle(instance):
+        instance.active = not instance.active
+        instance.save()
+        return instance.active
+
+    def get(self,request,batch_id=None):       
+        if batch_id:
+            batch = self.get_batch(batch_id)
+            value = batch.active
+        else:
+            value = self.request.profile.active
+
+        return Response({'status':1,'data':{'active':value}},status=status.HTTP_200_OK)
+
+    def put(self,request,batch_id=None):
+        if batch_id:
+            batch = self.get_batch(batch_id)           
+            value = self.toggle(batch)
+        else:
+            value = self.toggle(self.request.profile)
+
+        return Response({'status':1,'data':{'active':value}},status=status.HTTP_200_OK)
+
+        
         
 
         

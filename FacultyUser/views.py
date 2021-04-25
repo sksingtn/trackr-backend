@@ -2,6 +2,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from rest_framework import status
 from django.utils import timezone
 
@@ -19,9 +20,16 @@ class TimelineView(APIView):
     #Make a common class for both faculty and student view.
     def get(self,request):
 
+        if not request.profile.admin.active:
+            raise ValidationError('Admin has paused the classes for all batches!')
+
+        
         currentDateTime = timezone.localtime()
-        all_slots = Slot.objects.filter(faculty=request.profile).select_related(
+        all_slots = Slot.objects.filter(faculty=request.profile,batch__active=True).select_related(
             'timing', 'batch')
+
+        if not all_slots:
+            raise ValidationError('No classes Found! , Either classes are not assigned or paused!')
        
         previousSlot, ongoingSlot, nextSlot = all_slots.find_previous_ongoing_next_slot(currentDateTime=currentDateTime)
 
