@@ -20,6 +20,12 @@ urlpatterns = [
     #Admin Batch Handling
     path('batch/', view.BatchView.as_view()),
     path('batch/<int:batch_id>/',view.BatchView.as_view()),
+
+    #Admin resume/pause batches
+    path('active-toggle/',view.ToggleView.as_view(),name="admin-active-toggle"),
+    path('batch-toggle/<int:batch_id>/',view.ToggleView.as_view(),name="admin-batch-toggle"),
+
+    #Admin Student Handling
     
 
 ]

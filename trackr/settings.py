@@ -39,12 +39,13 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
-    'debug_toolbar'
+    'debug_toolbar',
+    'django_extensions'
 ]
 
 INTERNAL_IPS = [
 
-    '127.0.0.1',
+   # '127.0.0.1',
 
 ]
 
