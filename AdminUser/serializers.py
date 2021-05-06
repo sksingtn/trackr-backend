@@ -6,6 +6,7 @@ from django.db.models import Q
 
 from base.models import Timing, Slot, Batch, CustomUser
 from FacultyUser.models import FacultyProfile 
+from StudentUser.models import StudentProfile
 from .utils import ApiErrors
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -34,22 +35,14 @@ class FacultySerializer(serializers.ModelSerializer):
     image = serializers.SerializerMethodField()
 
     def create(self,validated_data):
-        """ Faculty Invite logic """
         email = validated_data.pop('email',False)
-        if email:
-            invited_user = CustomUser(email=email)
-            invited_user.set_unusable_password()
-            invited_user.save()
-            validated_data['user'] = invited_user
-
-            #Send An Invite Link here =>
-
-        return FacultyProfile.objects.create(**validated_data)
+        return FacultyProfile.create_profile(**validated_data,email=email)
 
     def get_image(self, instance):
         request = self.context.get('request')
         return request.build_absolute_uri(instance.image.url)
 
+    #Need to reuse
     def validate_email(self,data) :
         if CustomUser.objects.filter(email=data).exists():
             raise ValidationError('User with this email already exists!')
@@ -61,6 +54,33 @@ class FacultySerializer(serializers.ModelSerializer):
             raise ValidationError('You already have a faculty with same name!')
         return data
 
+
+class FacultyEmailSerializer(FacultySerializer):
+    class Meta(FacultySerializer.Meta):
+        fields = ['email']
+        #read_only_fields = ['id', 'status', 'image']
+
+
+class FacultyDetailSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FacultyProfile
+        fields = ['id','name','email', 'status', 'image','classes']
+
+    classes = serializers.SerializerMethodField()
+    email = serializers.CharField(source='user.email',default=None)
+
+    def get_classes(self,instance):
+        totalBatches = Batch.objects.filter(connected_slots__faculty=instance).distinct().count()
+        totalClasses = Slot.objects.filter(faculty=instance).count()
+
+        if not totalClasses:
+            msg = 'No classes'
+        else:
+            totalClasses = f'{totalClasses} class{"es" if totalClasses>1 else ""}'
+            totalBatches = f'{totalBatches} batch{"es" if totalBatches>1 else ""}'
+            msg = f'{totalClasses} in {totalBatches}'
+        return msg
 
 
 class TimingSerializer(serializers.ModelSerializer):
@@ -91,6 +111,7 @@ class SlotSerializer(serializers.ModelSerializer):
         extra_kwargs = {'batch': {'write_only': True},
                         'faculty': {'write_only': True}}
 
+        #Move this into extra_kwargs
         read_only_fields = ['id']
 
     timing = TimingSerializer(write_only=True)
@@ -142,6 +163,7 @@ class SlotSerializer(serializers.ModelSerializer):
                                                                                 action = 'added' if index == 1 else 'invited'))
 
 
+        #Move this logic to Slot create/update
         self.start_time,self.end_time,self.weekday = itemgetter('start_time','end_time','weekday')(validated_data.get('timing'))
 
         all_slots = Slot.objects.filter(timing__weekday=self.weekday).filter(Q(faculty=faculty)|Q(batch=batch))
@@ -191,6 +213,7 @@ class BatchSerializer(serializers.ModelSerializer):
         return instance.student_profiles.count()
 
     def get_verifiedFaculties(self,instance):
+        #Needs Refactoring
         #Could also use self.instance.connected_slots.distinct('faculty') but sqlite doesnt support it.
         total_faculties = set(FacultyProfile.objects.filter(slot__batch=instance))     
         verifiedFaculties = map(lambda profile: profile.status == "VERIFIED",total_faculties)                
@@ -200,7 +223,45 @@ class BatchSerializer(serializers.ModelSerializer):
         return instance.connected_slots.count()
 
 
-        
+class BatchDetailSerializer(BatchSerializer):
+
+    class Meta(BatchSerializer.Meta):
+        fields = BatchSerializer.Meta.fields + \
+            ['onboardStudents', 'maxStudents', 'inviteLink']
+
+    inviteLink = serializers.SerializerMethodField(read_only=True)
+    onboardStudents = serializers.BooleanField(source='onboard_students')
+    maxStudents = serializers.IntegerField(source='max_students')
+
+    def get_inviteLink(self,instance):
+        return instance.uuid
+
+
+class BatchEditSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = Batch
+        fields = ['title','max_students','onboard_students']
+
+        extra_kwargs = {'title':{'required':False}}
+
+    def validate_title(self,data):
+        admin = self.context.get('profile')
+
+        if admin.batch_set.filter(title__iexact=data).exists():
+            raise ValidationError('Batch with the requested title already exists!')
+        return data
+
+    def validate_max_students(self,data):
+        if data <= 0:
+            raise ValidationError('Max Students has to be greater than 0!')
+
+        if data < self.instance.student_profiles.count():
+            raise ValidationError('Max students can\'t be lower than current student count!')
+        return data
+
+    
+    
 class SimpleBatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = Batch
@@ -213,6 +274,28 @@ class SimpleBatchSerializer(serializers.ModelSerializer):
             raise ValidationError('Batch with same title already exists!')
 
         return title
+
+
+class StudentIdSerializer(serializers.Serializer): 
+    students = serializers.ListField(child=serializers.IntegerField(),allow_empty=True)
+
+
+class StudentDetailSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = StudentProfile
+        fields = ['id','name','image','joined','email']
+
+    image = serializers.SerializerMethodField()
+    joined = serializers.SerializerMethodField()
+    email = serializers.EmailField(source='user.email')
+
+    def get_image(self, instance):
+        request = self.context.get('request')
+        return request.build_absolute_uri(instance.image.url)
+
+    def get_joined(self,instance):
+        return instance.joined.strftime('%d %b %Y')
 
 
 

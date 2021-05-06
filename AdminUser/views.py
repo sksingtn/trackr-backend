@@ -12,12 +12,15 @@ from django.utils import timezone
 
 from . import serializers as ser
 from base.models import CustomUser,AdminProfile,FacultyProfile,Batch,Slot
+from StudentUser.models import StudentProfile
 from .permissions import IsAdmin
 from .pagination import ModifiedPageNumberPagination
 from base.utils import WEEKDAYS
+from .utils import StudentBatchMixin,FacultyMixin,BatchMixin
+from FacultyUser.exception import Error as FacultyError
 
 
-
+#Subclass from a more specific subclass in the end.
 class SignupView(APIView):
     """ Signup for Admins """
     serializer_class = ser.SignupSerializer
@@ -47,24 +50,86 @@ class FacultyView(APIView):
     permission_classes = [IsAuthenticated,IsAdmin]
 
     def get(self,request):  
-        #Test and replace by request.profile.invited_faculties.all().order_by('name')    
-        connected_faculties = FacultyProfile.objects.filter(admin=request.profile).order_by('name')
+    
+        connected_faculties = request.profile.invited_faculties.select_related('user').order_by('name')
         search = request.query_params.get('q')
+        detail = request.query_params.get('detail','0')
+        detail = True if detail == '1' else False
+
         if search:
             connected_faculties = connected_faculties.filter(name__icontains=search)
         
+        if detail:
+            serializer = ser.FacultyDetailSerializer
+        else:
+            serializer = ser.FacultySerializer
+        
         paginator = ModifiedPageNumberPagination()
         page = paginator.paginate_queryset(connected_faculties, request)
-        serializer = self.serializer_class(page, many=True,context={'request':request})
+        serializer = serializer(page, many=True,context={'request':request})
         return paginator.get_paginated_response(serializer.data)
-
-
 
     def post(self,request):
         data = self.serializer_class(data=request.data, context={'profile': self.request.profile})
         data.is_valid(raise_exception=True)
         data.save(admin=request.profile)
         return Response({'status':1,'data':'User Successfully Invited!'},status=status.HTTP_201_CREATED)
+
+
+class FacultyDeleteView(FacultyMixin, APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self,request,faculty_id):
+        #Delete Preview
+        faculty = self.get_faculty(faculty_id)
+        delete_preview = faculty.delete_preview()
+        return Response({'status':1,'data':delete_preview},status=status.HTTP_200_OK)
+
+    def delete(self,request,faculty_id):
+        faculty =self.get_faculty(faculty_id)
+        deleted_slots = faculty.delete_profile()
+        msg = 'Successfully deleted faculty'
+        if deleted_slots:
+            msg += f' along with {deleted_slots} associated slots'
+
+        return Response({'status': 1, 'data': msg}, status=status.HTTP_200_OK)
+
+
+class FacultyInviteView(FacultyMixin,APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = ser.FacultyEmailSerializer
+    def put(self,request,faculty_id):
+        faculty = self.get_faculty(faculty_id)
+        is_overriden = faculty.status == faculty.INVITED
+
+        data = self.serializer_class(data=request.data)
+        data.is_valid(raise_exception=True)
+
+        try:
+            faculty.add_user(email=data.validated_data['email'])
+        except FacultyError as err:
+            raise ValidationError(str(err))
+
+        if is_overriden:
+            msg = 'Email Invite successfully sent to updated address'
+        else:
+            msg = 'User Successfully Added & Invited!'
+
+        return Response({'status': 1, 'data':msg}, status=status.HTTP_200_OK)
+        
+
+class FacultyReInviteView(FacultyMixin,APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def put(self,request,faculty_id):
+        faculty = self.get_faculty(faculty_id)
+
+        try:
+            faculty.send_invite()
+        except FacultyError as err:
+            raise ValidationError(str(err))
+
+        return Response({'status': 1, 'data': 'Email Invite sent successfully!'}, status=status.HTTP_200_OK)
 
 
 class SlotView(APIView):
@@ -117,6 +182,8 @@ class BatchView(APIView):
             all_batches = self.request.profile.batch_set.all()
             data = ser.SimpleBatchSerializer(all_batches,many=True)
             return Response({'status':1,'data':data.data})
+
+        #Create a mixin for this.
         try:
             batch = self.request.profile.batch_set.get(pk=batch_id)
         except Batch.DoesNotExist:
@@ -141,10 +208,55 @@ class BatchView(APIView):
         return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
 
 
+class BatchDetailView(ListAPIView):
+    pagination_class = ModifiedPageNumberPagination
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = ser.BatchDetailSerializer
+
+    def get_queryset(self):
+        all_batches = self.request.profile.batch_set.order_by('title')
+        search = self.request.query_params.get('q')
+
+        if search:
+            all_batches = all_batches.filter(title__icontains=search)
+        return all_batches
+
+
+class BatchEditView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = ser.BatchEditSerializer
+
+    def put(self,request,batch_id):
+        #Create a mixin for this.
+        try:
+            batch = self.request.profile.batch_set.get(pk=batch_id)
+        except Batch.DoesNotExist:
+            raise ValidationError('Matching batch does not exist')
+
+        data = self.serializer_class(batch,data=request.data,context={'profile': request.profile})
+        data.is_valid(raise_exception=True)
+        data.save()
+
+        return Response({'status':1,'data':data.data},status=status.HTTP_200_OK)
+
+class BatchDeleteView(BatchMixin,APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self,request,batch_id):
+        batch = self.get_batch(batch_id)
+        delete_preview = batch.delete_preview()
+        return Response({'status': 1, 'data': delete_preview}, status=status.HTTP_200_OK)
+
+    def delete(self,request,batch_id):
+        batch = self.get_batch(batch_id)
+        batch.delete()
+        return Response({'status': 1, 'data': 'Deleted Batch success!'}, status=status.HTTP_200_OK)
+
 
 class ToggleView(APIView):
     permission_classes = [IsAuthenticated,IsAdmin]
 
+    #Maybe make this a mixin
     def get_batch(self,batch_id):
         try:
             batch = self.request.profile.batch_set.get(pk=batch_id)
@@ -175,6 +287,71 @@ class ToggleView(APIView):
             value = self.toggle(self.request.profile)
 
         return Response({'status':1,'data':{'active':value}},status=status.HTTP_200_OK)
+
+
+class StudentListView(StudentBatchMixin,APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = ser.StudentDetailSerializer
+
+    def get(self,request,batch_id):
+        batch = self.get_batch(batch_id)
+        all_students = batch.student_profiles.select_related('user').order_by('joined')
+
+        search = request.query_params.get('q')
+        if search:
+            all_students = all_students.filter(name__icontains=search)
+
+        paginator = ModifiedPageNumberPagination()
+        page = paginator.paginate_queryset(all_students, request)
+        serializer = self.serializer_class(
+            page, many=True, context={'request': request})
+        return paginator.get_paginated_response(serializer.data)
+
+
+class StudentMoveView(StudentBatchMixin,APIView):   
+    permission_classes = [IsAuthenticated,IsAdmin]
+    serializer_class = ser.StudentIdSerializer
+
+    def put(self,request,source_batch_id,destination_batch_id):
+        data = self.serializer_class(data=request.data)
+        data.is_valid(raise_exception=True)
+        student_list = data.validated_data['students']
+
+        destination_batch = self.get_batch(destination_batch_id)
+        source_batch, all_students = self.get_student_queryset(
+                                    source_batch_id, student_list)
+        
+        total_students = all_students.count()
+        all_students.update(batch=destination_batch)
+        msg = f'Successfully moved {total_students} students from {source_batch.title} to {destination_batch.title}'
+
+        return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
+
+
+class StudentDeleteView(StudentBatchMixin,APIView):
+    permission_classes = [IsAuthenticated,IsAdmin]
+    serializer_class = ser.StudentIdSerializer
+
+    def put(self,request,batch_id):
+        data = self.serializer_class(data=request.data)
+        data.is_valid(raise_exception=True)
+        student_list = data.validated_data['students']
+
+        batch, all_students = self.get_student_queryset(
+                                        batch_id, student_list)
+
+        total_students = all_students.count()
+        all_students.update(batch=None)
+        msg = f'Successfully deleted {total_students} students from {batch.title}'
+
+        return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
+
+        
+
+
+
+
+
 
         
         

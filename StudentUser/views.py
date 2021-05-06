@@ -7,9 +7,34 @@ from django.utils import timezone
 
 
 from .serializers import (StudentSlotSerializer, PreviousSlotSerializer,
-                          OngoingSlotSerializer, NextSlotSerializer)
+                          OngoingSlotSerializer, NextSlotSerializer,
+                          InviteLinkVerifySerializer,CreateStudentSerializer)
 from .permissions import IsStudent
 from base.models import Slot
+
+
+class CreateAccountView(APIView):
+    permission_classes = [AllowAny]
+    
+    def get(self,request):
+        data = InviteLinkVerifySerializer(data=self.request.query_params)
+        data.is_valid(raise_exception=True)
+        batch = data.save()
+        
+        batch_info = {'batch_name':batch.title,'admin_name':batch.admin.name}
+        return Response({'status':1,'data':batch_info},status=status.HTTP_200_OK)
+
+    def post(self,request):
+        data = InviteLinkVerifySerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        batch = data.save()
+        
+        student_user = CreateStudentSerializer(data=request.data)
+        student_user.is_valid(raise_exception=True)
+        student_user.save(batch=batch,joined=timezone.localtime().date())
+        
+        return Response({'status':1,'data':'Student Account created successfully, login to continue.'},status=status.HTTP_201_CREATED)
+
 
 
 class TimelineView(APIView):
@@ -19,6 +44,9 @@ class TimelineView(APIView):
     def get(self, request):
 
         batch = request.profile.batch
+
+        if batch is None:
+            raise ValidationError('Your Account has been deleted by the admin!')
 
         if not batch.admin.active:
             raise ValidationError('Admin has paused the classes for all batches!')
@@ -32,7 +60,6 @@ class TimelineView(APIView):
 
         if not all_slots:
             raise ValidationError('No classes assigned by the Admin yet!')
-
 
         previousSlot, ongoingSlot, nextSlot = all_slots.find_previous_ongoing_next_slot(
             currentDateTime=currentDateTime)

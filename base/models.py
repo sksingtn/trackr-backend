@@ -1,3 +1,4 @@
+import uuid
 from datetime import date,datetime,timedelta
 
 from django.db import models
@@ -59,15 +60,38 @@ class CustomUser(AbstractUser):
 
 
 class Batch(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4,unique=True)
     title = models.CharField(max_length=200)
     admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE)
-    #What happens when disabled? No notifications to descendants
     active = models.BooleanField(default=True)
     created = models.DateField(default=date.today)
 
+    onboard_students = models.BooleanField(default=True)
+    max_students = models.PositiveIntegerField(default=100)
+
     def __str__(self):
-        # More Detailed Representation
         return f'{self.title} ({self.connected_slots.all().count()} Slots Assigned)'
+
+    
+    def delete_preview(self):
+        all_slots = self.connected_slots.select_related('faculty','timing').order_by('timing__weekday')
+        slot_delete_preview = []
+        for slot in all_slots:
+            preview_text = (f'{slot.title} taught by {slot.faculty.name} on {slot.timing.get_weekday_string()}'
+                            f'({slot.timing.get_start_time()}-{slot.timing.get_end_time()})')
+            slot_delete_preview.append(preview_text)
+
+        all_students = self.student_profiles.select_related('user').order_by('name')
+        student_delete_preview = []
+        for student in all_students:
+            preview_text = f'{student.name} ({student.user.email})'
+            student_delete_preview.append(preview_text)
+
+        return {'slot_preview':slot_delete_preview,'student_preview':student_delete_preview}
+
+    def delete_batch(self):
+        
+        pass
 
 
 class Timing(models.Model):
@@ -148,7 +172,7 @@ class Timing(models.Model):
 class Slot(models.Model):
     batch = models.ForeignKey(Batch, related_name='connected_slots', on_delete=models.CASCADE)
     faculty = models.ForeignKey(FacultyProfile, on_delete=models.CASCADE)
-    timing = models.ForeignKey(Timing, on_delete=models.CASCADE)
+    timing = models.ForeignKey(Timing, on_delete=models.CASCADE) # models.PROTECT
     title = models.CharField(max_length=100)
     #Rename to last_activity
     created = models.DateTimeField(default=timezone.localtime)
