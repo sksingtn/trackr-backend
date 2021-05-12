@@ -43,7 +43,7 @@ class FacultyProfile(models.Model):
     @staticmethod
     def _initialize_user(email):
         from base.models import CustomUser
-        new_user = CustomUser(email=email)
+        new_user = CustomUser(email=email,user_type=CustomUser.FACULTY)
         new_user.set_unusable_password()
         new_user.full_clean()
         new_user.save()

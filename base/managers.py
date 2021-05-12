@@ -1,4 +1,5 @@
 from collections import defaultdict
+from operator import mod
 
 from django.db import models
 from django.db.models import Q
@@ -56,3 +57,27 @@ class SlotManager(models.Manager):
 
     def get_queryset(self):
         return SlotQuerySet(model=self.model, using=self._db)
+
+
+
+class BatchQueryset(models.QuerySet):
+
+    def get_all_students(self):
+        #Returns the ids of all the students present in the batches.
+        total_students = []
+        for batch in self:
+            for student_id in batch.student_profiles.values_list('user'):
+                total_students.append(student_id[0])
+        return total_students
+
+
+
+class BatchManager(models.Manager):
+
+    #Returns all the batches where faculty has atleast one class.
+    def get_queryset(self):
+        return BatchQueryset(model=self.model, using=self._db)
+
+    def taught_by(self,*,faculty):
+        return self.get_queryset().exclude(active=False).filter(
+            connected_slots__faculty=faculty).distinct()

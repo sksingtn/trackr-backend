@@ -45,6 +45,7 @@ class TimelineView(APIView):
 
         batch = request.profile.batch
 
+        #Use is_active()
         if batch is None:
             raise ValidationError('Your Account has been deleted by the admin!')
 

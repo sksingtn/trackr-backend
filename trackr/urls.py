@@ -10,7 +10,7 @@ urlpatterns = [
     path('api/admin-',include('AdminUser.urls')),
     path('api/faculty-', include('FacultyUser.urls')),
     path('api/student-', include('StudentUser.urls')),
-    #path('api/', include('base.urls')),
+    path('api/', include('base.urls')),
     path('__debug__/', include(debug_toolbar.urls)),
 ]
 if settings.DEBUG:

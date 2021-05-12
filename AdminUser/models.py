@@ -10,7 +10,10 @@ class AdminProfile(models.Model):
     name = models.CharField(max_length=200)
     image = models.ImageField(upload_to='profile_images/admin/', default='default.jpg')
 
+    #Remove this
     active = models.BooleanField(default=True)
 
     def __str__(self):
         return f'{self.name} (ADMIN)'
+
+

@@ -16,3 +16,7 @@ class StudentProfile(models.Model):
 
     def __str__(self):
         return f'{self.name} (STUDENT)'
+
+    def is_active(self):
+        #To determine if account has been deleted by admin
+        return self.batch is not None

@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.generics import CreateAPIView,ListCreateAPIView,ListAPIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny,IsAuthenticated
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 
@@ -346,6 +346,18 @@ class StudentDeleteView(StudentBatchMixin,APIView):
 
         return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
 
+#Move to createapiview
+class BroadcastView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = ser.BroadcastSerializer
+
+
+    def post(self,request):
+        data = self.serializer_class(data=request.data,context={'profile':request.profile})    
+        data.is_valid(raise_exception=True)
+        broadcast = data.save()
+        sent_to = broadcast.receivers.count()
+        return Response({'status':1,'data':f'Broadcast sent to {sent_to} people.'},status=status.HTTP_201_CREATED)
         
 
 

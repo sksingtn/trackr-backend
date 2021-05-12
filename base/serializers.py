@@ -1,6 +1,8 @@
 
+from operator import itemgetter
+
 from rest_framework import serializers
-from base.models import Slot
+from base.models import Broadcast, Slot
 
 #A base class is also needed here to enfore DRY.
 
@@ -67,3 +69,24 @@ class BaseNextSlotSerializer(serializers.ModelSerializer):
 
     def get_startsIn(self, instance):
         return instance.timing.get_elapsed(currentDateTime=self.context['currentDateTime'])
+
+
+class UserSerializer(serializers.Serializer):
+    email = serializers.EmailField(write_only=True)
+    password = serializers.CharField(style={'input_type': 'password'},write_only=True)
+
+
+class BroadcastSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Broadcast
+        fields = ['broadcast_type','text']
+
+    broadcast_type = serializers.SerializerMethodField()
+
+    def get_broadcast_type(self,instance):
+        user,view = itemgetter('user','view')(self.context)
+        if instance.sender == user:
+            return view.SENT
+        else:
+            return view.RECEIVED

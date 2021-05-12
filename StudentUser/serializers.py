@@ -49,7 +49,7 @@ class NextSlotSerializer(BaseNextSlotSerializer):
 
 class InviteLinkVerifySerializer(serializers.Serializer):
     token = serializers.CharField(write_only=True) 
-
+    #Maybe move the create to view?
     def create(self,validated_data):
         token = validated_data['token']
 
@@ -81,7 +81,7 @@ class CreateStudentSerializer(serializers.Serializer):
 
     def create(self,validated_data):
         from base.models import CustomUser
-        user = CustomUser(email=validated_data['email'])
+        user = CustomUser(email=validated_data['email'],user_type=CustomUser.STUDENT)
         user.set_password(validated_data['password'])
         user.full_clean()
         user.save()
