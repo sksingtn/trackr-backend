@@ -3,15 +3,18 @@ from operator import itemgetter
 
 from django.core import signing
 from django.contrib.auth.password_validation import MinimumLengthValidator
+from django.core.checks import messages
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from .models import FacultyProfile
-from base.models import Slot
+from base.models import Slot,Broadcast
 from AdminUser.serializers import SlotSerializer
 from AdminUser.utils import FACULTY_INVITE_MAX_AGE
 from base.serializers import (BasePreviousSlotSerializer,BaseOngoingSlotSerializer,BaseNextSlotSerializer)
+
+from FacultyUser import models
 
 
 
@@ -107,4 +110,17 @@ class FacultyPasswordSerializer(serializers.Serializer):
             raise ValidationError('Password must be 8 characters long!')
 
         return data
+
+
+class BroadcastSerializer(serializers.Serializer):
+    text = serializers.CharField(style={'base_template': 'textarea.html'},write_only=True)
+
+    def create(self,validated_data):
+        text,sender,receivers = itemgetter('text','sender','receivers')(validated_data)
+
+        broadcast = Broadcast.objects.create(sender=sender,text=text)
+        broadcast.receivers.add(*receivers)
+
+        return broadcast
+
 

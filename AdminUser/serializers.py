@@ -1,10 +1,12 @@
+from trackr.settings import BASE_DIR
+from AdminUser import models
 from operator import itemgetter
 
 from rest_framework import serializers
 from rest_framework.serializers import ValidationError
 from django.db.models import Q  
 
-from base.models import Timing, Slot, Batch, CustomUser
+from base.models import Timing, Slot, Batch, CustomUser,Broadcast
 from FacultyUser.models import FacultyProfile 
 from StudentUser.models import StudentProfile
 from .utils import ApiErrors
@@ -15,7 +17,7 @@ class SignupSerializer(serializers.ModelSerializer):
 
     #Because default create would'nt hash the password.
     def create(self,validated_data):      
-        return CustomUser.objects.create_user(**validated_data)
+        return CustomUser.objects.create_user(user_type=CustomUser.ADMIN,**validated_data)
         
 
     class Meta:
@@ -298,13 +300,62 @@ class StudentDetailSerializer(serializers.ModelSerializer):
         return instance.joined.strftime('%d %b %Y')
 
 
+class BroadcastSerializer(serializers.Serializer):
 
-    
+    EVERYONE = 'EVERYONE'
+    STUDENT = 'STUDENT'
+    FACULTY = 'FACULTY'
+    target = serializers.CharField(write_only=True)
+    text = serializers.CharField(style={'base_template': 'textarea.html'},write_only=True)
+
+    def create(self, validated_data):
+        target = validated_data['target']
+        user = self.context.get('profile')
+
+        filter_by_batch=False
+        if target.isdigit():
+            try:
+                batch = Batch.objects.get(admin=user, pk=int(target))
+            except Batch.DoesNotExist:
+                raise ValidationError('Matching batch does not exist!')
+            filter_by_batch = True
+
+        receiver = []
+        if target in {self.EVERYONE,self.FACULTY} or filter_by_batch:
+            all_faculties = user.invited_faculties.all()
+            if filter_by_batch:
+                all_faculties = all_faculties.filter(slot__batch=batch).distinct()
+
+            allowed_faculties = [fac.user.id for fac in all_faculties if fac.status == fac.VERIFIED]
+            receiver.extend(allowed_faculties)
+
+            
+        if target in {self.EVERYONE,self.STUDENT} or filter_by_batch:
+            all_batches = user.batch_set
+            if filter_by_batch:
+                all_batches = all_batches.filter(id=batch.id)
+
+            all_students = all_batches.prefetch_related('student_profiles').get_all_students()
+            receiver.extend(all_students)
+
+
+        if not receiver:
+            raise ValidationError('No Recipients exist to receive this broadcast!')
+
+        print(receiver,target)
+
+        text = validated_data['text']
+
+        broadcast = Broadcast.objects.create(sender=user.user,text=text)
+        broadcast.receivers.add(*receiver)    
+        
+        assert broadcast.receivers.count() == len(receiver)
+        return broadcast
+
+    def validate_target(self, data):
+        if data not in {self.EVERYONE,self.STUDENT,self.FACULTY} and not data.isdigit():
+            raise ValidationError(f'Target can only be {self.EVERYONE}/{self.STUDENT}/{self.FACULTY}/Valid Batch ID !')
+
+        return data
 
         
-
-
-
-
-    
-

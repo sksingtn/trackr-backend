@@ -54,6 +54,10 @@ urlpatterns = [
     #Deletes all/some students from a given batch on PUT.
     path('delete-students/<int:batch_id>/',view.StudentDeleteView.as_view(),name='admin-delete-students'),
 
+    
+    # Broadcast Messages to Student/Faculty
+    path('broadcast/', view.BroadcastView.as_view(), name="admin-broadcast"),
+
 
 
 ]
