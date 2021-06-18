@@ -87,8 +87,8 @@ class FacultyProfile(models.Model):
             raise Error('Profile already has a Verified User!')
 
         if currentStatus == self.INVITED:
+            #Check to see if new email != old email
             self.invite_sent = None
-        
         new_user = self._initialize_user(email)
         self.user = new_user
         self.save()
@@ -110,6 +110,7 @@ class FacultyProfile(models.Model):
         return profile
 
         #Replace with this after verifying test cases
+        #Need to add activity creation
         """
         profile = cls(admin=admin, name=name)
         profile.save()
