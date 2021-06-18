@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.utils.translation import ugettext_lazy as _
-from .models import Batch,Slot,Timing,CustomUser
+from .models import Batch,Slot,Timing,CustomUser,Activity
 
 
 @admin.register(CustomUser)
@@ -30,4 +30,4 @@ class UserAdmin(UserAdmin):
     item) and issubclass(item, django.db.models.Model) and not issubclass(item, django.contrib.auth.models.AbstractUser)]"""
 
 
-admin.site.register([ Batch,Slot, Timing ])
+admin.site.register([ Batch,Slot, Timing ,Activity])

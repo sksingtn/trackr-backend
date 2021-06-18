@@ -11,7 +11,7 @@ from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 
 from . import serializers as ser
-from base.models import CustomUser,AdminProfile,FacultyProfile,Batch,Slot
+from base.models import CustomUser,AdminProfile,FacultyProfile,Batch,Slot,Activity
 from StudentUser.models import StudentProfile
 from .permissions import IsAdmin
 from .pagination import ModifiedPageNumberPagination
@@ -32,10 +32,13 @@ class SignupView(APIView):
         username = data.validated_data.pop('name')
         new_user = data.save()
 
-        #Create A Token
+        #serializer should take care of everything.
+        #Create A Token (post_save)
         Token.objects.create(user=new_user)
         #Associate With an Admin Profile
-        AdminProfile.objects.create(user=new_user,name=username)
+        profile = AdminProfile.objects.create(user=new_user,name=username)
+
+        Activity.objects.create(user=profile.user,text='You Signed up with an ADMIN Account')
 
         return Response({'status':1,'message':'User Successfully created!'},status=status.HTTP_201_CREATED)
 
@@ -113,7 +116,7 @@ class FacultyInviteView(FacultyMixin,APIView):
         if is_overriden:
             msg = 'Email Invite successfully sent to updated address'
         else:
-            msg = 'User Successfully Added & Invited!'
+            msg = 'Email Successfully Added & Invite sent!'
 
         return Response({'status': 1, 'data':msg}, status=status.HTTP_200_OK)
         
@@ -317,13 +320,18 @@ class StudentMoveView(StudentBatchMixin,APIView):
         data.is_valid(raise_exception=True)
         student_list = data.validated_data['students']
 
-        destination_batch = self.get_batch(destination_batch_id)
         source_batch, all_students = self.get_student_queryset(
                                     source_batch_id, student_list)
+
+        destination_batch = self.get_batch(destination_batch_id)
         
+        Activity.fromQueryset(queryset=all_students,
+                            text=f'You have been moved from {source_batch.title} to {destination_batch.title} by Admin')
+
         total_students = all_students.count()
         all_students.update(batch=destination_batch)
         msg = f'Successfully moved {total_students} students from {source_batch.title} to {destination_batch.title}'
+        Activity.objects.create(user=request.user,text=msg)
 
         return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
 
@@ -340,9 +348,13 @@ class StudentDeleteView(StudentBatchMixin,APIView):
         batch, all_students = self.get_student_queryset(
                                         batch_id, student_list)
 
+        Activity.fromQueryset(queryset=all_students,
+                              text=f'You account has been deleted by Admin!')
+
         total_students = all_students.count()
         all_students.update(batch=None)
         msg = f'Successfully deleted {total_students} students from {batch.title}'
+        Activity.objects.create(user=request.user, text=msg)
 
         return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
 

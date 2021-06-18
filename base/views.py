@@ -1,20 +1,22 @@
+from AdminUser import pagination
 from re import search
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q,Count
 from rest_framework.views import APIView
+from rest_framework.generics import ListAPIView
 from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny,IsAuthenticated
 from rest_framework import serializers, status
 
-from .serializers import UserSerializer,BroadcastSerializer
+from .serializers import UserSerializer,ActivitySerializer
 from base.models import CustomUser,Broadcast, Message
 from base.utils import get_elapsed_string,get_user_profile
 from AdminUser.models import AdminProfile
 from FacultyUser.models import FacultyProfile
 from StudentUser.models import StudentProfile
-from .pagination import BroadcastPagination
+from .pagination import BroadcastPagination,ModifiedPageNumberPagination
 
 class CommonLoginView(APIView):
 
@@ -102,8 +104,13 @@ class UserProfileView(APIView):
         return Response({'status': 1, 'data': user_info}, status=status.HTTP_200_OK)
 
 
-class ShowActivity(APIView):
-    pass
+class ShowActivity(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = ModifiedPageNumberPagination
+    serializer_class = ActivitySerializer
+
+    def get_queryset(self):
+        return self.request.user.activities.order_by('-created')
 
 
 #Testing needed
