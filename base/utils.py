@@ -4,10 +4,10 @@ from rest_framework.response import Response
 from rest_framework.status import HTTP_400_BAD_REQUEST
 from django.utils import timezone
 from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.auth.password_validation import MinimumLengthValidator
 
 
-
-WEEKDAYS = ['Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday','Sunday']
 
 def custom_exception_handler(exc, context):
     # Call REST framework's default exception handler first,
@@ -28,8 +28,11 @@ def custom_exception_handler(exc, context):
             if errorField == 'error':
                 new_response['data'] = errorDetail[0]
             else:
-                #For Field Specific Errors include the field name too.
-                new_response['data'] = f'{errorField} => {str(errorDetail[0])}'
+                #For some Field Specific Errors include the field name too.
+                if str(errorDetail[0]) == 'This field is required.':
+                    new_response['data'] = f'{errorField} => {str(errorDetail[0])}'
+                else:
+                    new_response['data'] = errorDetail[0]
         
         else:
             #For Handling Validation Errors thrown directly from views
@@ -79,3 +82,31 @@ def get_user_profile(user):
         return None
 
     return profile
+
+def unique_email_validator(email):
+    from base.models import CustomUser
+
+    if CustomUser.objects.filter(email=email).exists():
+        raise ValidationError('User with this email already exists!')
+
+
+class PasswordMinLengthValidator(MinimumLengthValidator):
+    """
+    Modified Django's validator to work with DRF
+    """
+    def __call__(self, password):
+        try:
+            self.validate(password)
+        except DjangoValidationError:
+            raise ValidationError(
+                f'Password must be {self.min_length} characters long!')
+
+        return password
+
+
+def get_image(request,image):
+    return (request.build_absolute_uri(image.url) 
+            if bool(image) else None)
+
+
+

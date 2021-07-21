@@ -1,106 +1,116 @@
-from collections import defaultdict
-
-from rest_framework.authtoken.views import ObtainAuthToken
-from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
-from rest_framework.generics import CreateAPIView,ListCreateAPIView,ListAPIView
+from rest_framework.generics import CreateAPIView,ListAPIView, ListCreateAPIView,RetrieveUpdateAPIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny,IsAuthenticated
-from rest_framework import serializers, status
+from rest_framework.permissions import AllowAny
+from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
+from django.db.models import Count
 
 from . import serializers as ser
-from base.models import CustomUser,AdminProfile,FacultyProfile,Batch,Slot,Activity
-from StudentUser.models import StudentProfile
-from .permissions import IsAdmin
-from .pagination import ModifiedPageNumberPagination
-from base.utils import WEEKDAYS
-from .utils import StudentBatchMixin,FacultyMixin,BatchMixin
+from base.models import Slot,Activity
+from .models import AdminProfile
+from FacultyUser.models import FacultyProfile
+from base.permissions import IsAuthenticatedWithProfile
+from base.pagination import EnhancedPagination
+from .mixins import BatchToggleMixin, GetStudentMixin, GetFacultyMixin, GetBatchMixin
 from FacultyUser.exception import Error as FacultyError
 
 
-#Subclass from a more specific subclass in the end.
-class SignupView(APIView):
-    """ Signup for Admins """
-    serializer_class = ser.SignupSerializer
+
+#TODO: Figure out how to verify email!
+class SignupView(CreateAPIView):
     permission_classes = [AllowAny]
-    def post(self,request):
-        data = self.serializer_class(data=request.data)
-        data.is_valid(raise_exception=True)
+    serializer_class = ser.AdminSignupSerializer
 
-        username = data.validated_data.pop('name')
-        new_user = data.save()
+""" Faculty Views """
 
-        #serializer should take care of everything.
-        #Create A Token (post_save)
-        Token.objects.create(user=new_user)
-        #Associate With an Admin Profile
-        profile = AdminProfile.objects.create(user=new_user,name=username)
-
-        Activity.objects.create(user=profile.user,text='You Signed up with an ADMIN Account')
-
-        return Response({'status':1,'message':'User Successfully created!'},status=status.HTTP_201_CREATED)
-
-
-class FacultyView(APIView):
+class FacultyView(ListCreateAPIView):
     """
-    Shows All the Connected Faculties or a subset (on search) on GET,
+    Shows All Faculties belonging to the admin on GET ,
     Invite functionality via POST i.e send an inviation mail when email 
     is given otherwise simply add a blank user.
     """
     serializer_class = ser.FacultySerializer
-    permission_classes = [IsAuthenticated,IsAdmin]
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    pagination_class = EnhancedPagination
 
-    def get(self,request):  
-    
-        connected_faculties = request.profile.invited_faculties.select_related('user').order_by('name')
-        search = request.query_params.get('q')
-        detail = request.query_params.get('detail','0')
-        detail = True if detail == '1' else False
+    def get_queryset(self):
+        connected_faculties = self.request.profile.connected_faculties.prefetch_related('teaches_in')\
+            .select_related('user').order_by('-added')
 
-        if search:
-            connected_faculties = connected_faculties.filter(name__icontains=search)
+        query = self.request.query_params.get('q')
+
+        if query:
+            connected_faculties = connected_faculties.filter(
+                name__icontains=query)
         
-        if detail:
-            serializer = ser.FacultyDetailSerializer
+        return connected_faculties
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ser.FacultySerializer
+
+        showDetail = self.request.query_params.get('detail', '').lower() == 'true'
+        if showDetail:
+            return ser.FacultyDetailSerializer
         else:
-            serializer = ser.FacultySerializer
+            return ser.FacultySerializer
+
+    def perform_create(self, serializer):
+        serializer.save(admin=self.request.profile)
+
+
+class FacultyStatsView(APIView):
+    """
+    Returns the faculty count (grouped by their status) .
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+
+    def get(self,request):
+        statusChoices = [choice for choice,_ in FacultyProfile.status_choices]
+        #Initialize all status count to zero.
+        groupByStatus = {}.fromkeys(statusChoices, 0)
+
+        data = request.profile.connected_faculties.values('status')\
+                        .annotate(count=Count('status'))
         
-        paginator = ModifiedPageNumberPagination()
-        page = paginator.paginate_queryset(connected_faculties, request)
-        serializer = serializer(page, many=True,context={'request':request})
-        return paginator.get_paginated_response(serializer.data)
+        data = {item['status']: item['count']
+                for item in data.values('status', 'count')}
+        
+        groupByStatus.update(data)
 
-    def post(self,request):
-        data = self.serializer_class(data=request.data, context={'profile': self.request.profile})
-        data.is_valid(raise_exception=True)
-        data.save(admin=request.profile)
-        return Response({'status':1,'data':'User Successfully Invited!'},status=status.HTTP_201_CREATED)
+        groupByStatus = {key.lower()+'Count': value
+                         for key, value in groupByStatus.items()}
+
+        groupByStatus['totalCount'] = sum(groupByStatus.values())
+
+        return Response({'status': 1, 'data': groupByStatus}, status=status.HTTP_200_OK)
 
 
-class FacultyDeleteView(FacultyMixin, APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
-
-    def get(self,request,faculty_id):
-        #Delete Preview
-        faculty = self.get_faculty(faculty_id)
-        delete_preview = faculty.delete_preview()
-        return Response({'status':1,'data':delete_preview},status=status.HTTP_200_OK)
+class FacultyDeleteView(GetFacultyMixin, APIView):
+    """
+    Used to delete a faculty account.
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
 
     def delete(self,request,faculty_id):
         faculty =self.get_faculty(faculty_id)
-        deleted_slots = faculty.delete_profile()
-        msg = 'Successfully deleted faculty'
-        if deleted_slots:
-            msg += f' along with {deleted_slots} associated slots'
-
-        return Response({'status': 1, 'data': msg}, status=status.HTTP_200_OK)
+        faculty.delete_profile()
+        return Response({'status': 1, 'data': 'Faculty successfully deleted!'}, status=status.HTTP_200_OK)
 
 
-class FacultyInviteView(FacultyMixin,APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
-    serializer_class = ser.FacultyEmailSerializer
+class FacultyInviteView(GetFacultyMixin, APIView):
+    """
+    Used to add/overwrite email of UNVERIFIED/INVITED accounts.
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    serializer_class = ser.EmailSerializer
+
     def put(self,request,faculty_id):
         faculty = self.get_faculty(faculty_id)
         is_overriden = faculty.status == faculty.INVITED
@@ -108,21 +118,29 @@ class FacultyInviteView(FacultyMixin,APIView):
         data = self.serializer_class(data=request.data)
         data.is_valid(raise_exception=True)
 
+        email = data.validated_data['email']
         try:
-            faculty.add_user(email=data.validated_data['email'])
+            faculty.add_or_overwrite_user(email=email)
         except FacultyError as err:
             raise ValidationError(str(err))
 
         if is_overriden:
-            msg = 'Email Invite successfully sent to updated address'
+            msg = 'Email Invite successfully sent to the updated address!'
         else:
+            Activity.objects.create(user=request.user,
+            text=f"You invited {email} to claim the '{faculty.name}' FACULTY Account")
             msg = 'Email Successfully Added & Invite sent!'
 
         return Response({'status': 1, 'data':msg}, status=status.HTTP_200_OK)
         
 
-class FacultyReInviteView(FacultyMixin,APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+class FacultyReInviteView(GetFacultyMixin, APIView):
+    """
+    Used to resend email invite to already INVITED accounts,
+    limited to 1 per 24 hrs.
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
 
     def put(self,request,faculty_id):
         faculty = self.get_faculty(faculty_id)
@@ -134,13 +152,16 @@ class FacultyReInviteView(FacultyMixin,APIView):
 
         return Response({'status': 1, 'data': 'Email Invite sent successfully!'}, status=status.HTTP_200_OK)
 
-
+#TODO:Need a retrive too
+#TODO:Activity entries
 class SlotView(APIView):
     """ Handles Creation,Updation & Deletion of Slots """
     serializer_class = ser.SlotSerializer
-    permission_classes = [IsAuthenticated,IsAdmin]
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
 
     def post(self,request,slot_id=None):
+        #TODO: Why is slot id provided here?
         data = self.serializer_class(data=request.data,context={'profile':self.request.profile})
         data.is_valid(raise_exception=True)
         data.save()
@@ -173,51 +194,36 @@ class SlotView(APIView):
 
         return Response({'status': 1, 'data': data}, status=status.HTTP_200_OK)
 
-       
-class BatchView(APIView):
-    """ Handles Creation,ListView & DetailView of Batches """
-    permission_classes = [IsAuthenticated,IsAdmin]
-    serializer_class = ser.SimpleBatchSerializer
+""" Batch Views """
 
-    def get(self,request,batch_id=None):
-
-        if batch_id is None:
-            all_batches = self.request.profile.batch_set.all()
-            data = ser.SimpleBatchSerializer(all_batches,many=True)
-            return Response({'status':1,'data':data.data})
-
-        #Create a mixin for this.
-        try:
-            batch = self.request.profile.batch_set.get(pk=batch_id)
-        except Batch.DoesNotExist:
-            raise ValidationError('Matching batch does not exist')
-
-        batchData = ser.BatchSerializer(batch).data
-
-        all_slots = batch.connected_slots.select_related('timing', 'faculty')\
-                    .order_by('timing__start_time')
-        
-        jsonData = all_slots.serialize_and_group_by_weekday(serializer=ser.SlotSerializer)
-
-        return Response({'status': 1, 'data': {**batchData, "weekdayData": jsonData}}, status=status.HTTP_200_OK)
-
-    def post(self, request, *args, **kwargs):
-        if kwargs.get('batch_id'):
-            raise ValidationError('/batch_id/ not needed for POST method!')
-        data = ser.SimpleBatchSerializer(data=request.data, context={'profile': self.request.profile})
-
-        data.is_valid(raise_exception=True)
-        data.save(admin=self.request.profile)
-        return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
-
-
-class BatchDetailView(ListAPIView):
-    pagination_class = ModifiedPageNumberPagination
-    permission_classes = [IsAuthenticated, IsAdmin]
-    serializer_class = ser.BatchDetailSerializer
+class BatchListCreateView(ListCreateAPIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    pagination_class = None
+    serializer_class = ser.BatchSerializer
 
     def get_queryset(self):
-        all_batches = self.request.profile.batch_set.order_by('title')
+        return self.request.profile.batch_set.all()
+
+    def list(self,request,*args,**kwargs):
+        response = super().list(request,*args,**kwargs)
+        return Response({'status':1,'data':response.data},status=status.HTTP_200_OK)
+
+    def perform_create(self, serializer):
+        Activity.objects.create(user=self.request.user,
+        text=f"You created '{serializer.validated_data['title']}' batch")
+
+        return serializer.save(admin=self.request.profile)
+
+
+class BatchDetailedListView(ListAPIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    serializer_class = ser.BatchListDetailSerializer
+    pagination_class = EnhancedPagination
+
+    def get_queryset(self):
+        all_batches = self.request.profile.batch_set.order_by('-created')
         search = self.request.query_params.get('q')
 
         if search:
@@ -225,151 +231,185 @@ class BatchDetailView(ListAPIView):
         return all_batches
 
 
-class BatchEditView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
-    serializer_class = ser.BatchEditSerializer
+class BatchDetailUpdateView(GetBatchMixin,RetrieveUpdateAPIView):
+    """ Shows all the slots in the retrieve view """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    lookup_field = 'uuid'
+    lookup_url_kwarg = 'batch_id'
 
-    def put(self,request,batch_id):
-        #Create a mixin for this.
-        try:
-            batch = self.request.profile.batch_set.get(pk=batch_id)
-        except Batch.DoesNotExist:
-            raise ValidationError('Matching batch does not exist')
+    def get_serializer_class(self):
+        if self.request.method == 'PUT':
+            return ser.BatchUpdateSerializer
+        return ser.BatchDetailSerializer 
 
-        data = self.serializer_class(batch,data=request.data,context={'profile': request.profile})
-        data.is_valid(raise_exception=True)
-        data.save()
+    def get_object(self):
+        return self.get_batch(self.kwargs['batch_id'])
 
-        return Response({'status':1,'data':data.data},status=status.HTTP_200_OK)
 
-class BatchDeleteView(BatchMixin,APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+class BatchDeleteView(GetBatchMixin, APIView):
+    """
+    Shows Delete preview on GET,
+    deletes batch on DELETE
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
 
     def get(self,request,batch_id):
         batch = self.get_batch(batch_id)
-        delete_preview = batch.delete_preview()
-        return Response({'status': 1, 'data': delete_preview}, status=status.HTTP_200_OK)
+        data = ser.BatchDeletePreviewSerializer(batch).data
+        return Response({'status': 1, 'data': data}, status=status.HTTP_200_OK)
 
     def delete(self,request,batch_id):
         batch = self.get_batch(batch_id)
-        batch.delete()
-        return Response({'status': 1, 'data': 'Deleted Batch success!'}, status=status.HTTP_200_OK)
+        batch.delete_batch()
+        return Response({'status': 1, 'data': 'Deleted Batch successfully!'}, status=status.HTTP_200_OK)
 
 
-class ToggleView(APIView):
-    permission_classes = [IsAuthenticated,IsAdmin]
+class BatchToggleView(GetBatchMixin, APIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
 
-    #Maybe make this a mixin
-    def get_batch(self,batch_id):
-        try:
-            batch = self.request.profile.batch_set.get(pk=batch_id)
-            return batch
-        except Batch.DoesNotExist:
-            raise ValidationError('Matching batch does not exist')
-
-    @staticmethod
-    def toggle(instance):
-        instance.active = not instance.active
-        instance.save()
-        return instance.active
-
-    def get(self,request,batch_id=None):       
-        if batch_id:
-            batch = self.get_batch(batch_id)
-            value = batch.active
-        else:
-            value = self.request.profile.active
-
-        return Response({'status':1,'data':{'active':value}},status=status.HTTP_200_OK)
-
-    def put(self,request,batch_id=None):
-        if batch_id:
-            batch = self.get_batch(batch_id)           
-            value = self.toggle(batch)
-        else:
-            value = self.toggle(self.request.profile)
-
-        return Response({'status':1,'data':{'active':value}},status=status.HTTP_200_OK)
+    def put(self,request,batch_id):      
+        batch = self.get_batch(batch_id)           
+        batch.active = not batch.active
+        batch.save()    
+        return Response({'status':1,'data':batch.active},status=status.HTTP_200_OK)
 
 
-class StudentListView(StudentBatchMixin,APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+class BatchPauseAllView(BatchToggleMixin,APIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    action = False
+
+
+class BatchResumeAllView(BatchToggleMixin,APIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    action = True
+
+""" Student Views """
+
+class StudentListView(GetBatchMixin, ListAPIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
     serializer_class = ser.StudentDetailSerializer
+    pagination_class = EnhancedPagination
 
-    def get(self,request,batch_id):
-        batch = self.get_batch(batch_id)
-        all_students = batch.student_profiles.select_related('user').order_by('joined')
+    def get_queryset(self):
+        batch = self.get_batch(self.kwargs['batch_id'])
+        allStudents = batch.student_profiles.select_related('user')\
+                        .order_by('joined')
 
-        search = request.query_params.get('q')
-        if search:
-            all_students = all_students.filter(name__icontains=search)
+        query = self.request.query_params.get('q')
+        if query:
+            allStudents = allStudents.filter(name__icontains=query)
 
-        paginator = ModifiedPageNumberPagination()
-        page = paginator.paginate_queryset(all_students, request)
-        serializer = self.serializer_class(
-            page, many=True, context={'request': request})
-        return paginator.get_paginated_response(serializer.data)
+        return allStudents
 
 
-class StudentMoveView(StudentBatchMixin,APIView):   
-    permission_classes = [IsAuthenticated,IsAdmin]
-    serializer_class = ser.StudentIdSerializer
+class StudentMoveView(GetStudentMixin,GetBatchMixin,APIView):   
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
 
     def put(self,request,source_batch_id,destination_batch_id):
-        data = self.serializer_class(data=request.data)
+        data = ser.StudentIdSerializer(data=request.data)
         data.is_valid(raise_exception=True)
-        student_list = data.validated_data['students']
+        studentList = data.validated_data['students']
 
-        source_batch, all_students = self.get_student_queryset(
-                                    source_batch_id, student_list)
+        sourceBatch = self.get_batch(source_batch_id)
+        allStudents = self.get_student_queryset(sourceBatch, studentList)
+        destinationBatch = self.get_batch(destination_batch_id)
+    
+        totalStudents = allStudents.count()
+        #For all the affected student accounts
+        Activity.bulk_create_from_queryset(queryset=allStudents,
+        text=f'You have been moved from {sourceBatch.title} to {destinationBatch.title} by Admin')
 
-        destination_batch = self.get_batch(destination_batch_id)
-        
-        Activity.fromQueryset(queryset=all_students,
-                            text=f'You have been moved from {source_batch.title} to {destination_batch.title} by Admin')
+        allStudents.update(batch=destinationBatch)
 
-        total_students = all_students.count()
-        all_students.update(batch=destination_batch)
-        msg = f'Successfully moved {total_students} students from {source_batch.title} to {destination_batch.title}'
+        #For the current Admin account
+        msg = f'You moved {totalStudents} students from {sourceBatch.title} to {destinationBatch.title}'
         Activity.objects.create(user=request.user,text=msg)
 
         return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
 
 
-class StudentDeleteView(StudentBatchMixin,APIView):
-    permission_classes = [IsAuthenticated,IsAdmin]
-    serializer_class = ser.StudentIdSerializer
-
+class StudentDeleteView(GetStudentMixin, GetBatchMixin, APIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    
     def put(self,request,batch_id):
-        data = self.serializer_class(data=request.data)
+        data = ser.StudentIdSerializer(data=request.data)
         data.is_valid(raise_exception=True)
-        student_list = data.validated_data['students']
+        studentList = data.validated_data['students']
 
-        batch, all_students = self.get_student_queryset(
-                                        batch_id, student_list)
+        batch = self.get_batch(batch_id)
+        allStudents = self.get_student_queryset(batch, studentList)
 
-        Activity.fromQueryset(queryset=all_students,
+        #For all the affected student accounts
+        Activity.bulk_create_from_queryset(queryset=allStudents,
                               text=f'You account has been deleted by Admin!')
 
-        total_students = all_students.count()
-        all_students.update(batch=None)
-        msg = f'Successfully deleted {total_students} students from {batch.title}'
-        Activity.objects.create(user=request.user, text=msg)
+        totalStudents = allStudents.count()
+        allStudents.update(batch=None)
+
+        #For the current Admin account
+        msg = f'You deleted {totalStudents} students from {batch.title}'
+        Activity.objects.create(user=request.user,text=msg)
 
         return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
 
-#Move to createapiview
-class BroadcastView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+""" Broadcast Views """
+
+class BroadcastTargetView(ListAPIView):
+    """
+    Lists all the broadcast targets for the admin to choose from i.e
+    all the available student,faculty groups that can receive the broadcast.
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    serializer_class = ser.BroadcastTargetSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return self.request.profile.batch_set\
+            .annotate(students_count=Count('students', distinct=True))
+
+    def list(self,request,*args,**kwargs):
+        response = super().list(request,*args,**kwargs)
+
+        totalFaculties = self.request.profile.connected_faculties\
+                    .filter(status=FacultyProfile.VERIFIED).count()
+
+        totalStudents = self.request.profile.batch_set.\
+                        aggregate(students_count=Count('students', distinct=True))\
+                            .pop('students_count')
+
+        response.data.append({'label': f'All Students ({totalStudents})',
+                              'value': 'STUDENT'})
+        response.data.append({'label': f'All Faculties ({totalFaculties})',
+                              'value': 'FACULTY'})
+        response.data.append({'label': f'Everyone , {totalStudents} students, {totalFaculties} faculties',
+                              'value': 'EVERYONE'})
+
+        response.data = reversed(response.data)
+
+        return Response({'status': 1, 'data': response.data}, status=status.HTTP_200_OK)
+
+
+class BroadcastView(CreateAPIView):
+    """
+    Used to send broadcasts to students and faculty groups depending
+    on the specified target.
+    """
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
     serializer_class = ser.BroadcastSerializer
 
+    def perform_create(self, serializer):
+        return serializer.save(sender=self.request.user)
 
-    def post(self,request):
-        data = self.serializer_class(data=request.data,context={'profile':request.profile})    
-        data.is_valid(raise_exception=True)
-        broadcast = data.save()
-        sent_to = broadcast.receivers.count()
-        return Response({'status':1,'data':f'Broadcast sent to {sent_to} people.'},status=status.HTTP_201_CREATED)
         
 
 

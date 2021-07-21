@@ -2,9 +2,12 @@
 from operator import itemgetter
 
 from rest_framework import serializers
-from base.models import Activity, Slot
+from base.models import Activity, CustomUser, Slot
+from base.utils import get_elapsed_string
 
-#A base class is also needed here to enfore DRY.
+#TODO: BASE SLOT CLASS NEEDED
+
+#TODO:A base class is also needed here to enfore DRY.
 
 class BaseOngoingSlotSerializer(serializers.ModelSerializer):
 
@@ -81,3 +84,19 @@ class ActivitySerializer(serializers.ModelSerializer):
     class Meta:
         model = Activity
         fields = ['text','read','created']
+
+    created = serializers.SerializerMethodField()
+
+    def get_created(self,instance):
+        return get_elapsed_string(instance.created)
+
+
+class UserImageSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = CustomUser
+        fields = ['profile_image']
+
+    #Required
+    profile_image = serializers.ImageField(allow_null=False, max_length=100, required=True)
+

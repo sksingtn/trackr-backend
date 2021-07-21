@@ -1,65 +1,76 @@
 
+from django.utils import timezone
+from django.db.models import Count
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import ValidationError
-from rest_framework.generics import ListAPIView
-from rest_framework import request, status
-from django.utils import timezone
+from rest_framework.generics import ListAPIView,CreateAPIView
+from rest_framework import  status
 
-
-from .serializers import (FacultySlotSerializer,PreviousSlotSerializer,
+from .serializers import (BroadcastSerializer, FacultySlotSerializer, PreviousSlotSerializer,
                             OngoingSlotSerializer,NextSlotSerializer,
-                          InviteTokenVerifySerializer,FacultyPasswordSerializer,
-                          BroadcastSerializer)
-from .permissions import IsFaculty
-from base.models import Slot,Batch
+                          InviteTokenVerifySerializer,FacultySignupSerializer,
+                          BroadcastTargetSerializer
+                          )
+from base.permissions import IsAuthenticatedWithProfile
+from base.models import Slot
+from .models import FacultyProfile
 
-from FacultyUser import serializers
+
 
 class CreateAccountView(APIView):
+    """
+    Faculty signup using their Invite link.
+    """
     permission_classes = [AllowAny]
+    serializer_class = FacultySignupSerializer
     
     def get(self,request):
         """
-        Verfies token and sends data to be displayed to frontend so that 
-        faculty can be onboarded.
+        Verfies token and sends token context data.
+        Used to populate the Faculty signup form in frontend.
         """
-        data = InviteTokenVerifySerializer(data=request.query_params)
-        data.is_valid(raise_exception=True)
+        token = InviteTokenVerifySerializer(data=request.query_params)
+        token.is_valid(raise_exception=True)
+        targetFaculty = token.save()
 
-        target_user = data.save()
-        user_info = {'name':target_user.name,'invited_by':target_user.admin.name,
-                    'email':target_user.user.email}
-        return Response({'status':1,'data':user_info},status=status.HTTP_200_OK)
+        userInfo = {'name': targetFaculty.name, 'invitedBy': targetFaculty.admin.name,
+                     'email': targetFaculty.user.email}
+        return Response({'status': 1, 'data': userInfo}, status=status.HTTP_200_OK)
 
     def post(self,request):
-        password = FacultyPasswordSerializer(data=request.data)
-        password.is_valid(raise_exception=True)
-        password = password.validated_data['password']
+        """
+        After verifying the token,
+        Faculty account is created with given details.
+        """
+        signupDetails = FacultySignupSerializer(data=request.data)
+        signupDetails.is_valid(raise_exception=True)
 
-        data = InviteTokenVerifySerializer(data=request.data)
-        data.is_valid(raise_exception=True)
-        new_user =  data.save(password=password)
-        assert new_user.status == new_user.VERIFIED
-        return Response({'status': 1, 'data': 'Faculty Account created successfully, login to continue.'}, status=status.HTTP_201_CREATED)
+        token = {'token':signupDetails.validated_data.pop('token')}
+        token = InviteTokenVerifySerializer(data=token)
+        token.is_valid(raise_exception=True)
+        targetFaculty = token.save()
+        targetFaculty.claim_account(**signupDetails.validated_data)
+        
+        return Response({'status': 1, 'data': 'Faculty Account created successfully, login to continue.'},
+                         status=status.HTTP_201_CREATED)
     
+
+#TODO:Make a common class for both faculty and student view.
+#TODO: check if refactoring is needed
 class TimelineView(APIView):
 
-    permission_classes = [IsAuthenticated, IsFaculty]
-    #Make a common class for both faculty and student view.
-    def get(self,request):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = FacultyProfile
+    required_account_active = True
 
-        if not self.request.profile.is_active():
-            raise ValidationError('Your Account has been deleted by the admin!')
-            
-        admin = request.profile.admin
-        if not admin.active:
-            raise ValidationError('Admin has paused the classes for all batches!')
-      
+    def get(self,request):
+        #TODO:calc according to set timezone      
         currentDateTime = timezone.localtime()
-        all_slots = Slot.objects.filter(faculty=request.profile,batch__active=True).select_related(
-            'timing', 'batch')
+        all_slots = Slot.objects.filter(faculty=request.profile,batch__active=True)\
+                        .select_related('timing', 'batch')
 
         if not all_slots:
             raise ValidationError('No classes Found! , Either classes are not assigned or paused!')
@@ -82,55 +93,50 @@ class TimelineView(APIView):
         jsonData = all_slots.order_by('timing__start_time').serialize_and_group_by_weekday(
                     serializer=FacultySlotSerializer)
 
-        return Response({'timelineData':timelineData,'weekdayData': jsonData},status=status.HTTP_200_OK)
 
-from AdminUser.serializers import SimpleBatchSerializer
-class BatchView(ListAPIView):
+        return Response({'status':1,'data':{'timelineData':timelineData,'weekdayData': jsonData}},status=status.HTTP_200_OK)
 
-    serializer_class = SimpleBatchSerializer
-    permission_classes = [IsAuthenticated, IsFaculty]
+
+class BroadcastTargetView(ListAPIView):
+    """
+    Lists all the broadcast targets for the faculty to choose from i.e 
+    all the available student groups that can receive the broadcast.
+    """
+    serializer_class = BroadcastTargetSerializer
     pagination_class = None
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = FacultyProfile
+    required_account_active = True
 
     def get_queryset(self):
-        return Batch.objects.taught_by(faculty=self.request.profile)
+        return self.request.profile.assignedBatches()\
+            .annotate(students_count=Count('students', distinct=True))
+
+    def list(self,request,*args,**kwargs):
+        response = super().list(request,*args,**kwargs)
+
+        totalStudents = request.profile.assignedBatches()\
+            .aggregate(total_students=Count('students')).pop('total_students')
+        
+        response.data.append({'label': f'Everyone , {totalStudents} students',
+                              'value': 'EVERYONE'})
+        
+        response.data = reversed(response.data)
+
+        return Response({'status':1,'data':response.data},status=status.HTTP_200_OK)
 
 
-class BroadcastView(APIView):
-
+class BroadcastView(CreateAPIView):
+    """
+    Used to send broadcasts to students taught by the faculty.
+    Can be sent to all students or students from a specific batch
+    depending on the target field.
+    """
     serializer_class = BroadcastSerializer
-    permission_classes = [IsAuthenticated, IsFaculty]
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = FacultyProfile
+    required_account_active = True
 
-    def post(self,request,batch_id=None):
-        #Maybe this can be moved to permission i.e andActive
-        if not self.request.profile.is_active():
-            raise ValidationError('Your Account has been deleted by the admin!')
-
-        data = self.serializer_class(data=request.data)
-        data.is_valid(raise_exception=True)
-              
-        #Batches that are active and taught by this faculty.
-        allowed_batches = Batch.objects.taught_by(faculty=request.profile).values_list('pk')
-        allowed_batches = set(batch[0] for batch in allowed_batches)
-
-        if batch_id and batch_id not in allowed_batches:
-            raise ValidationError('You are not allowed to broadcast in this batch!')
-        
-        batch = Batch.objects.prefetch_related('student_profiles')
-        if batch_id:
-            batch = batch.filter(pk=batch_id)
-        else:
-            batch = batch.filter(pk__in=allowed_batches)          
-        total_students = batch.get_all_students()
-                        
-        if not total_students:
-            raise ValidationError("No students are present to receive the broadcast!")
-        
-        #Start an atomic block
-        broadcast = data.save(sender=request.user,receivers=total_students)
-        sent_to = broadcast.receivers.count()
-        assert sent_to == len(total_students)
-        
-        return Response({'status':1,'data':f'Broadcast sent to {sent_to} people.'},status=status.HTTP_201_CREATED)
-
-
+    def perform_create(self, serializer):
+        return serializer.save(sender=self.request.user)
 

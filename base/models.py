@@ -1,26 +1,32 @@
+import os
 import uuid
 from datetime import date,datetime,timedelta
+from PIL import Image
+from io import BytesIO
 
 from django.db import models
+from django.core.files import File
+from django.db.models.signals import pre_save,post_save
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
-from django.db.models import Q
 
-from AdminUser.models import AdminProfile
-from FacultyUser.models import FacultyProfile
+from django_resized import ResizedImageField
+from rest_framework.authtoken.models import Token
+
 from .managers import SlotManager,BatchManager
-from .utils import WEEKDAYS,get_elapsed_string
+from .utils import get_elapsed_string
+from trackr.settings import WEEKDAYS
 
 
-#Import the _
+
 class CustomUserManager(BaseUserManager):
     """
     Custom user model manager where email is the unique identifiers
     for authentication instead of usernames.
     """
-
+    #TODO: Figure out if its called anywhere internally
     def create_user(self, email, password, **extra_fields):
         """
         Create and save a User with the given email and password.
@@ -33,6 +39,7 @@ class CustomUserManager(BaseUserManager):
         user.save()
         return user
 
+    #TODO: probably not needed
     def create_superuser(self, email, password, **extra_fields):
         """
         Create and save a SuperUser with the given email and password.
@@ -42,17 +49,31 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault('is_active', True)
 
         if extra_fields.get('is_staff') is not True:
-            raise ValueError(_('Superuser must have is_staff=True.'))
+            raise ValueError('Superuser must have is_staff=True.')
         if extra_fields.get('is_superuser') is not True:
-            raise ValueError(_('Superuser must have is_superuser=True.'))
+            raise ValueError('Superuser must have is_superuser=True.')
         return self.create_user(email, password, **extra_fields)
 
-#A check for validating the user_type
-class CustomUser(AbstractUser):
-    username = None
-    email = models.EmailField('email address', unique=True)
 
-    #Decide if name and image should be here or in profile
+def main_image_path(instance, filename):
+    _,extension = os.path.splitext(filename)
+    return f'profile_images/{instance.user_type}/main__{uuid.uuid4()}{extension}'
+
+def thumbnail_path(instance,filename):
+    return f'profile_images/{instance.user_type}/thumbnail/{filename}'
+
+
+class CustomUser(AbstractUser):
+
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = []
+    username = None
+    email = models.EmailField(unique=True)
+
+    profile_image = ResizedImageField(
+        size=[1080, 1350], quality=75, upload_to=main_image_path, null=True, blank=True)
+    thumbnail = models.ImageField(upload_to=thumbnail_path, null=True, blank=True) 
+
     ADMIN = 'ADMIN'
     FACULTY = 'FACULTY'
     STUDENT = 'STUDENT'
@@ -62,18 +83,41 @@ class CustomUser(AbstractUser):
 
     user_type = models.CharField('User Profile Type',choices=type_choices,null=True,blank=True,max_length=10)
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = []
-
     objects = CustomUserManager()
 
     def __str__(self):
         return self.email
 
 
+def generate_thumbnail(sender,instance,*args,**kwargs):
+    #Only generate when new profile_image is uploaded.
+    if instance.profile_image and not instance.profile_image.closed:
+        _,extension = os.path.splitext(instance.profile_image.name)      
+        img = Image.open(instance.profile_image)
+        img.thumbnail((300,240))  
+        
+        thumb = BytesIO()  
+        img.save(thumb,img.format)
+        thumb_name = f'thumbnail_{uuid.uuid4()}{extension}'
+        instance.thumbnail = File(thumb, name=thumb_name)
+
+def create_auth_token(sender, instance=None, created=False, **kwargs):
+    #To prevent Token generation for INVITED Faculty accounts.
+    if created and instance.has_usable_password():
+        Token.objects.create(user=instance)
+
+pre_save.connect(generate_thumbnail, sender=CustomUser)
+post_save.connect(create_auth_token,sender=CustomUser)
+
+
 class Broadcast(models.Model):
     """
-    Admin/Faculty Users can broadcast messages to their sub accounts.
+    1.Admin users can broadcast messages to their connected Faculty/Student users
+      but can't receive broadcasts from anyone.
+    2.Faculty users can broadcast messages to their connected Student users
+      and can receive broadcasts from their admin.
+    3.Student users can receive broadcasts from their Admin & connected faculties
+      but cant send broadcasts to anyone.
     """
     PREVIEW_LENGTH = 80
 
@@ -95,7 +139,6 @@ class Broadcast(models.Model):
             raise DjangoValidationError('\'text\' field cant be empty!')
         if self.sender.user_type not in {CustomUser.ADMIN,CustomUser.FACULTY}:
             raise DjangoValidationError('Broadcast can be sent by ADMIN/FACULTY users only!')
-
         super().save(*args,**kwargs)
 
 #Unique constraint maybe needed
@@ -126,7 +169,7 @@ class Activity(models.Model):
         return f'{self.text} ({self.user.email})'
 
     @classmethod
-    def fromQueryset(cls,*,queryset,text):
+    def bulk_create_from_queryset(cls,*,queryset,text):
         bulk_create = []
         for obj in queryset:
             assert hasattr(obj,'user'),'Queryset Object needs to have a user attribute'
@@ -135,15 +178,12 @@ class Activity(models.Model):
         cls.objects.bulk_create(bulk_create)
 
 
-
-
 class Batch(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4,unique=True)
     title = models.CharField(max_length=200)
-    admin = models.ForeignKey(AdminProfile, on_delete=models.CASCADE)
+    admin = models.ForeignKey('AdminUser.AdminProfile', on_delete=models.CASCADE)
     active = models.BooleanField(default=True)
-    created = models.DateField(default=date.today)
-
+    created = models.DateTimeField(auto_now_add=True)
     onboard_students = models.BooleanField(default=True)
     max_students = models.PositiveIntegerField(default=100)
 
@@ -152,27 +192,31 @@ class Batch(models.Model):
     def __str__(self):
         return f'{self.title} ({self.connected_slots.all().count()} Slots Assigned)'
   
-    def delete_preview(self):
-        all_slots = self.connected_slots.select_related('faculty','timing').order_by('timing__weekday')
-        slot_delete_preview = []
-        for slot in all_slots:
-            preview_text = (f'{slot.title} taught by {slot.faculty.name} on {slot.timing.get_weekday_string()}'
-                            f'({slot.timing.get_start_time()}-{slot.timing.get_end_time()})')
-            slot_delete_preview.append(preview_text)
-
-        all_students = self.student_profiles.select_related('user').order_by('name')
-        student_delete_preview = []
-        for student in all_students:
-            preview_text = f'{student.name} ({student.user.email})'
-            student_delete_preview.append(preview_text)
-
-        return {'slot_preview':slot_delete_preview,'student_preview':student_delete_preview}
-
     def delete_batch(self):
-        
         pass
 
+    def total_classes(self):
+        return self.connected_slots.count()
 
+    def total_students(self):
+        return self.student_profiles.count()
+
+    def getAssignedFaculties(self):
+        from FacultyUser.models import FacultyProfile
+        #Faculty that teach atleast 1 or more Slots in the current batch
+        return FacultyProfile.objects.filter(slots__batch=self).distinct()
+
+    def delete_batch(self):
+        allStudents = self.student_profiles.all()
+        Activity.bulk_create_from_queryset(queryset=allStudents,
+        text= "Your account has been deleted because the associated Batch has been deleted by the admin.")
+
+        Activity.objects.create(user=self.admin.user,
+        text=f"You have deleted the '{self.title}' Batch.")
+
+        self.delete()
+
+#TODO: Remove Sunday
 class Timing(models.Model):
     """This is not attached to a user to ease the notifier function,
         because this way we can query for an incoming slot and it will give us
@@ -198,10 +242,10 @@ class Timing(models.Model):
         return WEEKDAYS[self.weekday]
 
     def get_start_time(self):
-        return self.start_time.strftime('%I:%M %p')
+        return self.start_time.strftime('%I:%M%p')
 
     def get_end_time(self):
-        return self.end_time.strftime('%I:%M %p')
+        return self.end_time.strftime('%I:%M%p')
   
     def get_duration_in_seconds(self):
         #Cant subtract time from time so combined both with a common date.
@@ -249,15 +293,17 @@ class Timing(models.Model):
 
 #Add a last notified field (what to do with it in update?)
 class Slot(models.Model):
-    batch = models.ForeignKey(Batch, related_name='connected_slots', on_delete=models.CASCADE)
-    faculty = models.ForeignKey(FacultyProfile, on_delete=models.CASCADE)
+    batch = models.ForeignKey(Batch, related_name='connected_slots',related_query_name='slots', on_delete=models.CASCADE)
+    faculty = models.ForeignKey('FacultyUser.FacultyProfile',related_name='teaches_in',related_query_name='slots', on_delete=models.CASCADE)
     timing = models.ForeignKey(Timing, on_delete=models.CASCADE) # models.PROTECT
     title = models.CharField(max_length=100)
-    #Rename to last_activity
+    #TODO:Rename to last_modified and localtime -> now
     created = models.DateTimeField(default=timezone.localtime)
 
     objects = SlotManager()
 
+    def __str__(self):
+        return f'{self.title} Taught By {self.faculty} ({self.timing})'
 
     def get_last_activity(self):
         return get_elapsed_string(self.created)

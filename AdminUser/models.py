@@ -1,20 +1,32 @@
 import uuid
 
 from django.db import models
+from django.contrib.auth import get_user_model
 
-from trackr.settings import AUTH_USER_MODEL as User
+from timezone_field import TimeZoneField
 
-#Add a country field to determine timezone data
+from trackr import settings
+
+
 class AdminProfile(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4,unique=True)
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    name = models.CharField(max_length=200)
-    image = models.ImageField(upload_to='profile_images/admin/', default='default.jpg')
-
-    #Remove this
-    active = models.BooleanField(default=True)
+    name = models.CharField(max_length=100)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)   
+    timezone = TimeZoneField()
+    joined = models.DateField(auto_now_add=True)
 
     def __str__(self):
-        return f'{self.name} (ADMIN)'
+        return f'{self.user} (ADMIN)'
+
+    @classmethod
+    def create_profile(cls,*,name,email,password,timezone):
+        from base.models import Activity
+        CustomUser = get_user_model()
+        user = CustomUser.objects.create_user(email,password,
+                        user_type=CustomUser.ADMIN)
+
+        adminProfile = cls.objects.create(name=name,user=user,timezone=timezone)
+        Activity.objects.create(user=user,text='You Signed up with an ADMIN Account.')
+        return adminProfile
 
 

@@ -274,8 +274,8 @@ class AdminSlotHandling(TestCase):
             "status": 1,
             "data": {
                 "title": "admin1_slot_name_changed",
-                "startTime": "08:00 PM",
-                "endTime": "09:00 PM",
+                "startTime": "08:00PM",
+                "endTime": "09:00PM",
                 "duration": "60 Mins",
                 "facultyName": "admin1_faculty2",
                 "weekday": "Tuesday"
@@ -317,8 +317,8 @@ class AdminSlotHandling(TestCase):
             "status": 1,
             "data": {
                 "title": "admin1_slot2",
-                "startTime": "08:00 PM",
-                "endTime": "09:00 PM",
+                "startTime": "08:00PM",
+                "endTime": "09:00PM",
                 "duration": "60 Mins",
                 "facultyName": "admin1_faculty",
                 "weekday": "Monday"
