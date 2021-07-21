@@ -1,10 +1,10 @@
-from collections import defaultdict
-from operator import mod
+from operator import itemgetter
+from itertools import groupby
 
 from django.db import models
 from django.db.models import Q
 
-from .utils import WEEKDAYS
+from trackr.settings import WEEKDAYS
 
 
 class SlotQuerySet(models.QuerySet):
@@ -21,21 +21,29 @@ class SlotQuerySet(models.QuerySet):
         return self.filter(Q(timing__start_time__range=interval) |
                            Q(timing__end_time__range=interval) | edgeCase).first()
 
-    def serialize_and_group_by_weekday(self,serializer):
-        all_slots = serializer(self, many=True)
-        weekday_dict = defaultdict(list)
-        for item in all_slots.data:
-            try:
-                weekday_dict[item.pop('weekday')].append(item)
-            except KeyError:
-                raise Exception('Serializer must have a weekday field!')
+    def serialize_and_group_by_weekday(self,*,serializer):
+        all_slots = serializer(self, many=True).data
 
-        #Fill the empty weekdays with empty list.
-        remaining = ({}.fromkeys(set(WEEKDAYS).difference(weekday_dict.keys()), []))
-        weekday_dict.update(remaining)
+        groupedData = {}
+        for weekday,slots in groupby(all_slots,key=itemgetter('weekday')):
+            
+            slots = list(slots)
+            for item in slots:
+                item.pop('weekday')
+            groupedData[weekday] = slots
+      
+        #Initialize weekdays with no slots with an empty list.
+        remainingWeekdays = set(WEEKDAYS) - groupedData.keys()
+        #These will always remain [], so initializing with [] is not a problem.
+        remainingWeekdays = {}.fromkeys(remainingWeekdays,[])
+        groupedData.update(remainingWeekdays)
 
-        #Sort them by weekday
-        return dict(sorted(weekday_dict.items(),key=lambda x: WEEKDAYS.index(x[0])))
+        #Sort by weekday and return as list of dicts.
+        response = []
+        for key,value in sorted(groupedData.items(),key=lambda x : WEEKDAYS.index(x[0])):
+            response.append({'weekday':key,'data':value})
+            
+        return response
 
     def find_previous_ongoing_next_slot(self,currentDateTime):
         currentWeekday = currentDateTime.weekday()
@@ -60,24 +68,12 @@ class SlotManager(models.Manager):
 
 
 
+#TODO:Test for obsoleteness
+
 class BatchQueryset(models.QuerySet):
-
-    def get_all_students(self):
-        #Returns the ids of all the students present in the batches.
-        total_students = []
-        for batch in self:
-            for student_id in batch.student_profiles.values_list('user'):
-                total_students.append(student_id[0])
-        return total_students
-
-
+    pass
 
 class BatchManager(models.Manager):
-
-    #Returns all the batches where faculty has atleast one class.
     def get_queryset(self):
         return BatchQueryset(model=self.model, using=self._db)
 
-    def taught_by(self,*,faculty):
-        return self.get_queryset().exclude(active=False).filter(
-            connected_slots__faculty=faculty).distinct()

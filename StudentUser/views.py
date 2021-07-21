@@ -1,45 +1,62 @@
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.exceptions import ValidationError
-from rest_framework import status
+from StudentUser.models import StudentProfile
 from django.utils import timezone
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from rest_framework.exceptions import ValidationError
+from rest_framework import status
 
 from .serializers import (StudentSlotSerializer, PreviousSlotSerializer,
                           OngoingSlotSerializer, NextSlotSerializer,
-                          InviteLinkVerifySerializer,CreateStudentSerializer)
-from .permissions import IsStudent
-from base.models import Slot
+                          InviteLinkVerifySerializer, StudentSignupSerializer)
+from base.permissions import IsAuthenticatedWithProfile
 
 
+#TODO: Figure out how to verify email!
 class CreateAccountView(APIView):
+    """
+    Student signup using a batch Invite link.
+    """
     permission_classes = [AllowAny]
+    serializer_class = StudentSignupSerializer
     
     def get(self,request):
+        """
+        Verfies token and sends token context data.
+        Used to populate the Student signup form in frontend.
+        """
         data = InviteLinkVerifySerializer(data=self.request.query_params)
         data.is_valid(raise_exception=True)
-        batch = data.save()
+        targetBatch = data.save()
         
-        batch_info = {'batch_name':batch.title,'admin_name':batch.admin.name}
-        return Response({'status':1,'data':batch_info},status=status.HTTP_200_OK)
+        inviteInfo = {'batch': targetBatch.title,
+                      'admin': targetBatch.admin.name}
+        return Response({'status': 1, 'data': inviteInfo}, status=status.HTTP_200_OK)
 
     def post(self,request):
-        data = InviteLinkVerifySerializer(data=request.data)
-        data.is_valid(raise_exception=True)
-        batch = data.save()
+        """
+        After verifying the token,
+        Student account is created with given details.
+        """
+        studentAccount = StudentSignupSerializer(data=request.data)
+        studentAccount.is_valid(raise_exception=True)
         
-        student_user = CreateStudentSerializer(data=request.data)
-        student_user.is_valid(raise_exception=True)
-        student_user.save(batch=batch,joined=timezone.localtime().date())
+        token = {'token': studentAccount.validated_data.pop('token')}
+        token = InviteLinkVerifySerializer(data=token)
+        token.is_valid(raise_exception=True)
+        targetBatch = token.save()
         
-        return Response({'status':1,'data':'Student Account created successfully, login to continue.'},status=status.HTTP_201_CREATED)
+        studentAccount.save(batch=targetBatch)       
+        return Response({'status':1,'data':'Student Account created successfully, login to continue.'},
+                        status=status.HTTP_201_CREATED)
 
 
 
 class TimelineView(APIView):
-
-    permission_classes = [IsAuthenticated, IsStudent]
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = StudentProfile
+    required_account_active = True
 
     def get(self, request):
 

@@ -1,11 +1,8 @@
 import os
+from datetime import timedelta
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/2.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'j#dv#qa2&#gy37dp2!tjzbam&ey#e6+8x4s+a!^7#l!&drs*#b'
@@ -18,6 +15,12 @@ ALLOWED_HOSTS = []
 AUTH_USER_MODEL = 'base.CustomUser'
 
 CORS_ALLOW_ALL_ORIGINS = True
+
+#Application specific settings.
+
+FACULTY_INVITE_MAX_AGE = timedelta(days=7)
+
+WEEKDAYS = ['Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 # Application definition
 
@@ -34,7 +37,6 @@ INSTALLED_APPS = [
     'StudentUser',
     'FacultyUser',
 
-
     # External
     'rest_framework',
     'rest_framework.authtoken',
@@ -45,7 +47,7 @@ INSTALLED_APPS = [
 
 INTERNAL_IPS = [
 
-   # '127.0.0.1',
+   #'127.0.0.1',
 
 ]
 
@@ -89,6 +91,7 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+        'ATOMIC_REQUESTS': True,
     }
 }
 
@@ -112,7 +115,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'Asia/Kolkata'
+TIME_ZONE = 'UTC'
 
 USE_I18N = True
 
@@ -122,14 +125,12 @@ USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/2.2/howto/static-files/
-
 STATIC_URL = '/static/'
 
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
 
-# DRF Settings
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication'
@@ -137,7 +138,6 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated'
     ],
-
     
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
         'PAGE_SIZE': 5,

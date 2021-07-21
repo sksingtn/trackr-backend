@@ -1,6 +1,6 @@
-from AdminUser import pagination
-from re import search
-from django.core.exceptions import ObjectDoesNotExist
+from datetime import time
+from collections import defaultdict
+
 from django.db.models import Q,Count
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
@@ -9,14 +9,16 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny,IsAuthenticated
 from rest_framework import serializers, status
+from rest_framework.parsers import FormParser,MultiPartParser
 
-from .serializers import UserSerializer,ActivitySerializer
-from base.models import CustomUser,Broadcast, Message
-from base.utils import get_elapsed_string,get_user_profile
+from .serializers import UserSerializer,ActivitySerializer,UserImageSerializer
+from base.models import Activity, CustomUser,Broadcast, Message
+from base.utils import get_elapsed_string,get_user_profile,get_image
 from AdminUser.models import AdminProfile
 from FacultyUser.models import FacultyProfile
 from StudentUser.models import StudentProfile
-from .pagination import BroadcastPagination,ModifiedPageNumberPagination
+from .pagination import EnhancedPagination
+
 
 class CommonLoginView(APIView):
 
@@ -33,8 +35,6 @@ class CommonLoginView(APIView):
                 raise CustomUser.DoesNotExist
 
             assert base_user.user_type is not None,'Invalid User!'
-
-            #Maybe another validation to confirm the user_type?
 
         except CustomUser.DoesNotExist:
             raise ValidationError('The Email/Password combination is incorrect!')
@@ -61,59 +61,107 @@ class CommonLogoutView(APIView):
 
 
 class UserProfileView(APIView):
-
+    #TODO:Change from UTC when showing
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):       
-        user_type = request.user.user_type
-        user_info = {}
+    def get(self, request):  
+        user = request.user
+        profile = get_user_profile(user)
+        showDetail = request.query_params.get('detail', '').lower() == 'true'
 
-        try:
-            if user_type == request.user.ADMIN:
-                profile = AdminProfile.objects.get(user=request.user)
-                
-            elif user_type == request.user.FACULTY:
-                profile = FacultyProfile.objects.get(user=request.user)
-                user_info['account_active'] = profile.is_active()
+        userInfo = defaultdict(dict)
+        userInfo['basics'] = {'name':profile.name,'userType':user.user_type,
+                             'isActive':isinstance(profile,AdminProfile) or profile.is_active()}
+        if not showDetail:
+            userInfo['basics']['image'] = get_image(request,user.thumbnail)
+        else:
+            userInfo['basics']['image'] = get_image(request,user.profile_image)
 
-                user_info.setdefault('invited_by',None)
-                if user_info['account_active']:
-                    user_info['invited_by'] = profile.admin.name
+            userInfo['details'] = {'email':user.email,
+                                  'joined':profile.joined.strftime('%d %b %Y')}
+            
+            if isinstance(profile,AdminProfile):
+                userInfo['details']['timezone'] = str(profile.timezone)
 
-            elif user_type == request.user.STUDENT:                
-                profile = StudentProfile.objects.get(user=request.user)
-                user_info['account_active'] = profile.is_active()
+            elif isinstance(profile,FacultyProfile) and profile.is_active():           
+                userInfo['details']['timezone'] = str(profile.admin.timezone)
+                userInfo['details']['admin'] = profile.admin.name
+                userInfo['preferences']['sendNotification'] = profile.receive_email_notification
 
-                user_info.update({'invited_by':None,'batch':None})
-                if user_info['account_active']:
-                    user_info['invited_by'] = profile.batch.admin.name
-                    user_info['batch'] = profile.batch.title
-            else:
-                raise ObjectDoesNotExist
+            elif isinstance(profile,StudentProfile) and profile.is_active():
+                userInfo['details']['timezone'] = str(profile.batch.admin.timezone)
+                userInfo['details']['admin'] = profile.batch.admin.name
+                userInfo['details']['batch'] = profile.batch.title
+                userInfo['preferences']['sendNotification'] = profile.receive_email_notification
 
-            #Common Fields
-            user_info['name'] = profile.name
-            user_info['email'] = profile.user.email
-            user_info['image'] = request.build_absolute_uri(profile.image.url)
-            user_info['type'] = user_type
-                
+        return Response({'status': 1, 'data': userInfo}, status=status.HTTP_200_OK) 
 
-        except ObjectDoesNotExist:
-            raise ValidationError('Corrupt User!')
 
-        return Response({'status': 1, 'data': user_info}, status=status.HTTP_200_OK)
+class UploadProfileImageView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserImageSerializer
+
+    def post(self,request):
+        serializer = UserImageSerializer(data=request.data, instance=request.user)
+        oldImg = request.user.profile_image
+        oldThumbnail = request.user.thumbnail
+
+        serializer.is_valid(raise_exception=True)
+
+        #Delete old Images if any.
+        for img in (oldImg,oldThumbnail):
+            if bool(img):
+                img.delete()
+
+        serializer.save()
+        return Response({'status':1,'data':get_image(request,request.user.profile_image)},status=status.HTTP_201_CREATED)
+
+
+class ToggleNotificationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        user = request.user
+        if user.user_type not in {CustomUser.FACULTY,CustomUser.STUDENT}:
+            raise ValidationError('Only applicable to Faculty/Student users!')
+
+        profile = get_user_profile(user)
+
+        if not profile.is_active():
+            raise ValidationError('Your Account has been deleted by the admin!')
+
+        profile.receive_email_notification = not profile.receive_email_notification
+        profile.save()
+
+        return Response({'status':1,'data':profile.receive_email_notification},
+                        status=status.HTTP_200_OK)
+
 
 
 class ShowActivity(ListAPIView):
     permission_classes = [IsAuthenticated]
-    pagination_class = ModifiedPageNumberPagination
+    pagination_class = EnhancedPagination
     serializer_class = ActivitySerializer
 
     def get_queryset(self):
         return self.request.user.activities.order_by('-created')
 
+    def paginate_queryset(self, queryset):
+        activityList = self.paginator.paginate_queryset(queryset, self.request, view=self)
+        
+        #Update read status for read activities in current page.
+        unread = [activity.id for activity in activityList if not activity.read]
+        if unread:
+            Activity.objects.filter(id__in=unread).update(read=True)
 
-#Testing needed
+        return activityList
+        
+    def get_paginated_response(self, data):
+        unreadCount = self.request.user.activities.filter(read=False).count()
+        return self.paginator.get_paginated_response(data,unreadCount=unreadCount)
+   
+
 class ShowBroadcast(APIView):
 
     SENT = 'SENT'
@@ -122,24 +170,31 @@ class ShowBroadcast(APIView):
 
     def serialize(self,queryset):
         """
-        Custom serialization because data had 2 perspectives,
-        and it was getting two complex for the Serializer class.
+        Custom serialization because data has 2 perspectives i.e sent and received,
+        and it gets too complex with DRF serializer.
         """
         jsonData = []
         for broadcast in queryset:
             serialized = {}
-            receivers = broadcast.receivers.count()
             if broadcast.sender == self.request.user:
-                serialized['type'] = self.SENT
-                serialized['received_by'] = receivers
-                serialized['read_by'] = broadcast.message_set.filter(read=True).count()
+                serialized['type'] = self.SENT                
+                receivers = []
+                for message in broadcast.message_set.all():
+                    receiver = message.receiver
+                    img = get_image(self.request,receiver.thumbnail)
+                    receivers.append({'email':receiver.email,
+                                      'type':receiver.user_type,
+                                      'image':img,
+                                      'read':message.read})
+                serialized['receivers'] = receivers
+
             else:
                 serialized['type'] = self.RECEIVED
-                profile = get_user_profile(broadcast.sender)
-                profile_info = {'name': profile.name, 'type': broadcast.sender.user_type,
-                                'image': self.request.build_absolute_uri(profile.image.url)}
-                serialized['sent_by'] = profile_info
-                serialized['sent_to'] = receivers
+                sender = broadcast.sender
+                profile_info = {'email': sender.email, 'type': sender.user_type,
+                                'image': get_image(self.request,sender.thumbnail)}
+                serialized['sentBy'] = profile_info
+                serialized['sentTo'] = broadcast.message_set.count()
                 serialized['read'] = broadcast.message_set.get(receiver=self.request.user).read
 
             serialized['text'] = broadcast.text
@@ -150,11 +205,8 @@ class ShowBroadcast(APIView):
 
     def get(self,request):     
         currentUser = request.user
-        filter_by_type = request.query_params.get('type','').upper()
-
-        if currentUser is None:
-            raise ValidationError('Corrupt User!')
-
+        filter_by_type = request.query_params.get('filter','').upper()
+   
         if filter_by_type:
             if currentUser.user_type != CustomUser.FACULTY:
                 raise ValidationError('Filter is only applicable for Faculty Users!')
@@ -169,35 +221,72 @@ class ShowBroadcast(APIView):
             all_broadcasts = currentUser.received_broadcasts.all()
 
         elif currentUser.user_type == CustomUser.FACULTY:
-            #Lazy loaded so not an issue
-            sent_broadcasts = currentUser.sent_broadcasts.all()
-            received_broadcasts = currentUser.received_broadcasts.all()
-
             if filter_by_type == self.SENT:
-                all_broadcasts = sent_broadcasts
+                all_broadcasts = currentUser.sent_broadcasts.all()
             elif filter_by_type == self.RECEIVED:
-                all_broadcasts = received_broadcasts
+                all_broadcasts = currentUser.received_broadcasts.all()
             else:
                 all_broadcasts = Broadcast.objects.filter(Q(sender=currentUser)|Q(receivers=currentUser)).distinct()
+        else:
+            raise ValidationError("Corrupt User!")
                 
-        #Maybe specific for each
-        all_broadcasts = all_broadcasts.select_related('sender').prefetch_related('receivers')\
+        
+        all_broadcasts = all_broadcasts.select_related('sender').prefetch_related('message_set__receiver')\
                         .order_by('-created')
-        pagination = BroadcastPagination()
+        pagination = EnhancedPagination()
         all_broadcasts = pagination.paginate_queryset(all_broadcasts, request)
         serialized_data = self.serialize(all_broadcasts)
 
-        all_unread = None
+        #Calculate unread messages & update the read status of already read messages.
+        unreadCount = None
         if (currentUser.user_type == CustomUser.STUDENT) or  \
             (currentUser.user_type == CustomUser.FACULTY  and filter_by_type !=self.SENT):
 
             read_msgs = Message.objects.filter(broadcast__in=all_broadcasts,receiver=currentUser,read=False)    
             read_msgs.update(read=True)
             
-            all_unread = Message.objects.filter(receiver=currentUser, read=False).count()
-            
-            
-        return pagination.get_paginated_response(serialized_data,unread=all_unread)
+            unreadCount = Message.objects.filter(receiver=currentUser, read=False).count()
+                      
+        return pagination.get_paginated_response(serialized_data,unreadCount=unreadCount)
+
+
+class MarkActivityAsReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        unread = Activity.objects.filter(user=request.user,read=False)
+        unreadCount = unread.count()
+
+        if unreadCount == 0:
+            msg = 'All Activities are already read!'
+        else:
+            unread.update(read=True)
+            msg = f'{unreadCount} activities marked as read!'
+
+        return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
+
+
+class MarkBroadcastAsReadView(APIView):
+    #TODO:Broadcast for deleted users
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        user = request.user
+
+        #Admin users dont receive broadcasts.
+        if user.user_type not in {CustomUser.FACULTY,CustomUser.STUDENT}:
+            raise ValidationError('Only applicable to Faculty/Student users!')
+
+        unread = Message.objects.filter(receiver=user,read=False)
+        unreadCount = unread.count()
+
+        if unreadCount == 0:
+            msg = 'All Broadcasts are already read!'
+        else:
+            unread.update(read=True)
+            msg = f'{unreadCount} broadcasts marked as read!'
+
+        return Response({'status':1,'data':msg},status=status.HTTP_200_OK)
 
 
 
