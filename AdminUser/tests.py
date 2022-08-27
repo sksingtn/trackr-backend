@@ -4,7 +4,7 @@ from json import loads
 from rest_framework.test import APIRequestFactory,force_authenticate,APIClient
 from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
-from django.test import TestCase
+from django.test import TransactionTestCase
 from django.urls import reverse
 
 from . import views as AdminView
@@ -13,7 +13,7 @@ from FacultyUser.models import FacultyProfile
 from base.models import Batch,Slot,Timing
 from .utils import ApiErrors as Error
 
-class AdminSignupInvite(TestCase):
+class AdminSignupInvite(TransactionTestCase):
 
     def setUp(self):
         self.factory = APIRequestFactory()
@@ -25,7 +25,7 @@ class AdminSignupInvite(TestCase):
         """
         url = reverse('admin-signup')
         postData = {'email':'admin@test.com','password':'password',
-                    'name':'admin'}
+                    'name':'admin','timezone':'Asia/Kolkata'}
 
         request = self.factory.post(url,postData,content='json')
         response = AdminView.SignupView.as_view()(request)
@@ -70,12 +70,12 @@ class AdminSignupInvite(TestCase):
 
 
 
-class AdminSlotHandling(TestCase):
+class AdminSlotHandling(TransactionTestCase):
     
     #Clarify about testcase design
     def setUp(self):
         adminPostData = {'email':'admin1@test.com','password':'password',
-                        'name':'admin1'}
+                        'name':'admin1','timezone':'Asia/Kolkata'}
         client = APIClient()
         resp = client.post(reverse('admin-signup'),adminPostData)
         self.mainAdmin = AdminProfile.objects.get(name=adminPostData['name'])       
@@ -87,7 +87,8 @@ class AdminSlotHandling(TestCase):
 
 
         #Creating another admin and its descendants.
-        client.post(reverse('admin-signup'),{'password':'password','email':'admin2@gmail.com','name':'admin2'})
+        client.post(reverse('admin-signup'),{'password':'password','email':'admin2@gmail.com','name':'admin2',
+                                            'timezone':'Asia/Kolkata'})
         self.otherAdmin = AdminProfile.objects.get(name='admin2')
        
         self.factory = APIRequestFactory()
