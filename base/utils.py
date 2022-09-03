@@ -1,12 +1,14 @@
-from rest_framework.views import exception_handler
-from rest_framework.exceptions import ValidationError
-from rest_framework.response import Response
-from rest_framework.status import HTTP_400_BAD_REQUEST
+from datetime import date,datetime
+
 from django.utils import timezone
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth.password_validation import MinimumLengthValidator
 
+from rest_framework.views import exception_handler
+from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
+from rest_framework.status import HTTP_400_BAD_REQUEST
 
 
 def custom_exception_handler(exc, context):
@@ -107,6 +109,14 @@ class PasswordMinLengthValidator(MinimumLengthValidator):
 def get_image(request,image):
     return (request.build_absolute_uri(image.url) 
             if bool(image) else None)
+
+#TODO: can this be used in more places?
+def get_time_difference(time1,time2):
+    commonDate = date.today()
+    time1 = datetime.combine(commonDate,time1)
+    time2 = datetime.combine(commonDate,time2)
+    return (time1 - time2).total_seconds()
+    
 
 
 

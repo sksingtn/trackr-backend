@@ -9,11 +9,10 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.generics import ListAPIView,CreateAPIView
 from rest_framework import  status
 
-from .serializers import (BroadcastSerializer, FacultySlotSerializer, PreviousSlotSerializer,
-                            OngoingSlotSerializer,NextSlotSerializer,
+from .serializers import (BroadcastSerializer,  OngoingSlotSerializer,NextOrPreviousSlotSerializer,
                           InviteTokenVerifySerializer,FacultySignupSerializer,
-                          BroadcastTargetSerializer
-                          )
+                          BroadcastTargetSerializer)
+from base.serializers import FacultySlotDisplaySerializer
 from base.permissions import IsAuthenticatedWithProfile
 from base.models import Slot
 from .models import FacultyProfile
@@ -58,8 +57,7 @@ class CreateAccountView(APIView):
                          status=status.HTTP_201_CREATED)
     
 
-#TODO:Make a common class for both faculty and student view.
-#TODO: check if refactoring is needed
+
 class TimelineView(APIView):
 
     permission_classes = [IsAuthenticatedWithProfile]
@@ -67,34 +65,22 @@ class TimelineView(APIView):
     required_account_active = True
 
     def get(self,request):
-        #TODO:calc according to set timezone      
-        currentDateTime = timezone.localtime()
-        all_slots = Slot.objects.filter(faculty=request.profile,batch__active=True)\
-                        .select_related('timing', 'batch')
 
+        all_slots = Slot.objects.filter(faculty=request.profile,batch__active=True)\
+                        .select_related('batch')
         if not all_slots:
             raise ValidationError('No classes Found! , Either classes are not assigned or paused!')
        
-        previousSlot, ongoingSlot, nextSlot = all_slots.find_previous_ongoing_next_slot(currentDateTime=currentDateTime)
+        tz = request.profile.admin.timezone       
+        timelineInfo = all_slots.find_previous_ongoing_next_slot(tz=tz,
+                            pSerializer=NextOrPreviousSlotSerializer
+                            ,oSerializer=OngoingSlotSerializer
+                            ,nSerializer=NextOrPreviousSlotSerializer)
 
-        timelineData = {}
-        context = {'currentDateTime': currentDateTime}
-        for slot, serializer in ((previousSlot, PreviousSlotSerializer),
-                                (ongoingSlot, OngoingSlotSerializer),
-                                (nextSlot, NextSlotSerializer)):
+        jsonData = all_slots.order_by('start_time').serialize_and_group_by_weekday(
+                    serializer=FacultySlotDisplaySerializer)
 
-            fieldName = serializer.__name__.replace('Serializer','')
-            value = None
-            if slot is not None:
-                value = serializer(slot,context=context).data
-            
-            timelineData[fieldName] = value
-
-        jsonData = all_slots.order_by('timing__start_time').serialize_and_group_by_weekday(
-                    serializer=FacultySlotSerializer)
-
-
-        return Response({'status':1,'data':{'timelineData':timelineData,'weekdayData': jsonData}},status=status.HTTP_200_OK)
+        return Response({'status':1,'data':{'timelineData':timelineInfo,'weekdayData': jsonData}},status=status.HTTP_200_OK)
 
 
 class BroadcastTargetView(ListAPIView):

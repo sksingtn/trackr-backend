@@ -182,6 +182,7 @@ class FacultyProfile(models.Model):
             self.admin = None
             self.save()
         else:
+            #Slots that this faculty taught in will automatically get deleted via cascading.
             if self.status == self.INVITED:
                 self.user.delete()
             self.delete()

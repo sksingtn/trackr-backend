@@ -8,6 +8,10 @@ from base.models import Activity, Batch
 
 
 class StudentProfile(models.Model):
+    """
+    Students can join a batch by creating an account via
+    the invite link shared by Admin.
+    """
     uuid = models.UUIDField(default=uuid.uuid4, unique=True)
     name = models.CharField(max_length=100)
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True) 

@@ -18,8 +18,6 @@ urlpatterns = [
 
     #TODO:
     #forget password
-    #delete account
-
     
     
 ]

@@ -10,10 +10,9 @@ from django.db.models.signals import pre_save,post_save
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.utils import timezone
 
-from django_resized import ResizedImageField
 from rest_framework.authtoken.models import Token
+from django_resized import ResizedImageField
 
 from .managers import SlotManager,BatchManager
 from .utils import get_elapsed_string
@@ -191,9 +190,6 @@ class Batch(models.Model):
 
     def __str__(self):
         return f'{self.title} ({self.connected_slots.all().count()} Slots Assigned)'
-  
-    def delete_batch(self):
-        pass
 
     def total_classes(self):
         return self.connected_slots.count()
@@ -216,28 +212,59 @@ class Batch(models.Model):
 
         self.delete()
 
-#TODO: Remove Sunday
-class Timing(models.Model):
-    """This is not attached to a user to ease the notifier function,
-        because this way we can query for an incoming slot and it will give us
-        details for upcoming classes of every batch of every user"""
+
+class Slot(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4,unique=True)
+    title = models.CharField(max_length=100)
     weekdays = (       
         (0, "Monday"),
         (1, "Tuesday"),
         (2, "Wednesday"),
         (3, "Thursday"),
         (4, "Friday"),
-        (5, "Saturday"),
-        (6, "Sunday")
+        (5, "Saturday")
     )
     start_time = models.TimeField()
     end_time = models.TimeField()
     weekday = models.IntegerField(choices=weekdays)
+    batch = models.ForeignKey(Batch, related_name='connected_slots',
+                            related_query_name='slots', on_delete=models.CASCADE)
+    faculty = models.ForeignKey('FacultyUser.FacultyProfile',related_name='teaches_in',
+                                    related_query_name='slots', on_delete=models.CASCADE)
+    #TODO: remove auto_now
+    last_modified = models.DateTimeField(auto_now=True)
 
+    next_utc_occurence = models.DateTimeField(null=True) 
+
+    objects = SlotManager()
 
     def __str__(self):
-        return f'{self.start_time} - {self.end_time} ({self.weekday})'
+        return f'{self.title} Taught By {self.faculty} ({self.start_time} - {self.end_time} {self.weekday})'
 
+
+    @classmethod
+    def create_slot(cls,title,start_time,end_time,weekday,faculty,batch):
+
+        possibleOverlaps = cls.objects.possible_overlap_queryset(weekday,faculty,batch)
+        possibleOverlaps.detect_overlap(start_time,end_time,batch)
+
+        return cls.objects.create(title=title,start_time=start_time,end_time=end_time,
+                weekday=weekday,batch=batch,faculty=faculty)
+
+    def update_slot(self,title,start_time,end_time,weekday,faculty):
+
+        possibleOverlaps = Slot.objects.possible_overlap_queryset(weekday,faculty,self.batch)
+        possibleOverlaps = possibleOverlaps.exclude(pk=self.id)
+
+        possibleOverlaps.detect_overlap(start_time,end_time,self.batch)
+
+        self.title = title
+        self.start_time = start_time
+        self.end_time = end_time
+        self.weekday = weekday
+        self.faculty = faculty
+        self.save()
+        
     def get_weekday_string(self):
         return WEEKDAYS[self.weekday]
 
@@ -246,9 +273,8 @@ class Timing(models.Model):
 
     def get_end_time(self):
         return self.end_time.strftime('%I:%M%p')
-  
+
     def get_duration_in_seconds(self):
-        #Cant subtract time from time so combined both with a common date.
         commonDate = date(1999, 6, 21)
         startTime = datetime.combine(commonDate, self.start_time)
         endTime = datetime.combine(commonDate, self.end_time)
@@ -258,54 +284,5 @@ class Timing(models.Model):
         total_seconds = self.get_duration_in_seconds()
         return f'{int(total_seconds//60)} Mins'
 
-    def get_elapsed_seconds(self,currentDateTime):
-        currentDateTime = currentDateTime.replace(tzinfo=None)
-        slotStartTime = datetime.combine(currentDateTime.date(),self.start_time)
-        slotEndTime = datetime.combine(currentDateTime.date(),self.end_time)
-
-        if currentDateTime.weekday() != self.weekday or (not slotStartTime <= currentDateTime <= slotEndTime):
-            raise Exception('Slot does not coincide with current time!')
-
-        elapsedSeconds = (currentDateTime - slotStartTime).total_seconds()
-
-        return int(elapsedSeconds)
-
-    def get_elapsed(self, currentDateTime):
-        currentDateTime = currentDateTime.replace(tzinfo=None)
-        currentDate = currentDateTime.date()
-
-        dayOffset = self.weekday - currentDateTime.weekday()
-        buildDate = currentDate + timedelta(days=dayOffset)
-
-        if dayOffset < 0 or (dayOffset == 0 and datetime.combine(currentDate,self.end_time) < currentDateTime):
-            time = self.end_time
-        elif dayOffset > 0 or (dayOffset == 0 and datetime.combine(currentDate,self.start_time) > currentDateTime):
-            time = self.start_time
-        else:
-            raise Exception('Slot coincides with current time!')
-
-        buildDateTime = datetime.combine(buildDate,time)
-
-        total_seconds = (currentDateTime-buildDateTime).total_seconds()
-
-        return int(abs(total_seconds))
-
-
-#Add a last notified field (what to do with it in update?)
-class Slot(models.Model):
-    batch = models.ForeignKey(Batch, related_name='connected_slots',related_query_name='slots', on_delete=models.CASCADE)
-    faculty = models.ForeignKey('FacultyUser.FacultyProfile',related_name='teaches_in',related_query_name='slots', on_delete=models.CASCADE)
-    timing = models.ForeignKey(Timing, on_delete=models.CASCADE) # models.PROTECT
-    title = models.CharField(max_length=100)
-    #TODO:Rename to last_modified and localtime -> now
-    created = models.DateTimeField(default=timezone.localtime)
-
-    objects = SlotManager()
-
-    def __str__(self):
-        return f'{self.title} Taught By {self.faculty} ({self.timing})'
-
-    def get_last_activity(self):
-        return get_elapsed_string(self.created)
- 
-
+    def get_last_modified(self):
+        return get_elapsed_string(self.last_modified)

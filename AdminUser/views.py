@@ -1,19 +1,21 @@
+from django.db.models import Count
+
 from rest_framework.views import APIView
-from rest_framework.generics import CreateAPIView,ListAPIView, ListCreateAPIView,RetrieveUpdateAPIView
+from rest_framework.generics import (CreateAPIView,ListAPIView, ListCreateAPIView,
+                                    RetrieveUpdateAPIView, RetrieveUpdateDestroyAPIView)
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
-from django.utils import timezone
-from django.db.models import Count
 
 from . import serializers as ser
-from base.models import Slot,Activity
+from base.models import Activity
 from .models import AdminProfile
 from FacultyUser.models import FacultyProfile
 from base.permissions import IsAuthenticatedWithProfile
 from base.pagination import EnhancedPagination
-from .mixins import BatchToggleMixin, GetStudentMixin, GetFacultyMixin, GetBatchMixin
+from .mixins import (BatchToggleMixin, GetStudentMixin, GetFacultyMixin, 
+                        GetBatchMixin,GetSlotMixin)
 from FacultyUser.exception import Error as FacultyError
 
 
@@ -27,7 +29,7 @@ class SignupView(CreateAPIView):
 
 class FacultyView(ListCreateAPIView):
     """
-    Shows All Faculties belonging to the admin on GET ,
+    Shows All Faculties (detailed/normal) belonging to the admin on GET ,
     Invite functionality via POST i.e send an inviation mail when email 
     is given otherwise simply add a blank user.
     """
@@ -126,11 +128,12 @@ class FacultyInviteView(GetFacultyMixin, APIView):
 
         if is_overriden:
             msg = 'Email Invite successfully sent to the updated address!'
+            activity=f"You updated invitation email of '{faculty.name}' FACULTY Account to {email}"
         else:
-            Activity.objects.create(user=request.user,
-            text=f"You invited {email} to claim the '{faculty.name}' FACULTY Account")
             msg = 'Email Successfully Added & Invite sent!'
+            activity=f"You invited {email} to claim the '{faculty.name}' FACULTY Account"
 
+        Activity.objects.create(user=request.user,text=activity)
         return Response({'status': 1, 'data':msg}, status=status.HTTP_200_OK)
         
 
@@ -152,47 +155,36 @@ class FacultyReInviteView(GetFacultyMixin, APIView):
 
         return Response({'status': 1, 'data': 'Email Invite sent successfully!'}, status=status.HTTP_200_OK)
 
-#TODO:Need a retrive too
-#TODO:Activity entries
-class SlotView(APIView):
-    """ Handles Creation,Updation & Deletion of Slots """
-    serializer_class = ser.SlotSerializer
+
+
+""" Slot Views """
+
+class SlotView(CreateAPIView):
     permission_classes = [IsAuthenticatedWithProfile]
     required_profile = AdminProfile
+    serializer_class = ser.SlotCreateUpdateSerializer
 
-    def post(self,request,slot_id=None):
-        #TODO: Why is slot id provided here?
-        data = self.serializer_class(data=request.data,context={'profile':self.request.profile})
-        data.is_valid(raise_exception=True)
-        data.save()
-        return Response({'status':1,'data':data.data},status=status.HTTP_201_CREATED)
 
-    def put(self, request, slot_id=None):
+class SlotRUDView(GetSlotMixin,RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticatedWithProfile]
+    required_profile = AdminProfile
+    lookup_field = 'uuid'
+    lookup_url_kwarg = 'slot_id'
 
-        #Move it to a common class method!
-        #Making sure that requested slot is owned by current admin.
-        try:
-            slot = Slot.objects.get(pk=slot_id,batch__admin=self.request.profile)
-        except Slot.DoesNotExist:
-            raise ValidationError('Matching Slot does not exist')
+    def get_object(self):
+        return self.get_slot(self.kwargs['slot_id'])
 
-        data = self.serializer_class(slot,data=request.data, context={'profile': self.request.profile})               
-        data.is_valid(raise_exception=True)
-        data.save(created = timezone.localtime())
-        return Response({'status': 1, 'data': data.data}, status=status.HTTP_200_OK)
+    def get_serializer_class(self):      
+        if self.request.method == 'GET':
+            return ser.SlotRetrieveSerializer
+        return ser.SlotCreateUpdateSerializer
 
-    def delete(self,request,slot_id=None):
-        try:
-            slot = Slot.objects.get(pk=slot_id,batch__admin=self.request.profile)
-        except Slot.DoesNotExist:
-            return Response({'status': 0, 'data': 'Matching Slot does not exist'})
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        uuid = instance.uuid
+        instance.delete()
+        return Response({'status':1,'data':uuid},status=status.HTTP_200_OK)
 
-        data = self.serializer_class(slot).data
-        slot.delete()
-
-        #Garbage collection of unused timing needed.
-
-        return Response({'status': 1, 'data': data}, status=status.HTTP_200_OK)
 
 """ Batch Views """
 
@@ -409,15 +401,3 @@ class BroadcastView(CreateAPIView):
 
     def perform_create(self, serializer):
         return serializer.save(sender=self.request.user)
-
-        
-
-
-
-
-
-
-        
-        
-
-        

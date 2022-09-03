@@ -4,44 +4,30 @@ from uuid import UUID
 from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
 
-from AdminUser.serializers import SlotSerializer
 from base.models import Slot,Batch
 from .models import StudentProfile
-from base.serializers import (
-    BasePreviousSlotSerializer, BaseOngoingSlotSerializer, BaseNextSlotSerializer)
+from base.serializers import BaseOngoingSlotSerializer, BaseNextOrPreviousSlotSerializer
 from base.utils import unique_email_validator,PasswordMinLengthValidator
 
 
-class StudentSlotSerializer(SlotSerializer):
-    pass
 
 
 class OngoingSlotSerializer(BaseOngoingSlotSerializer):
-
-    facultyName = serializers.CharField(source='faculty.name', read_only=True)
 
     class Meta(BaseOngoingSlotSerializer.Meta):
         model = Slot
         fields = BaseOngoingSlotSerializer.Meta.fields + ['facultyName']
 
-
-class PreviousSlotSerializer(BasePreviousSlotSerializer):
-
     facultyName = serializers.CharField(source='faculty.name', read_only=True)
 
-    class Meta(BasePreviousSlotSerializer.Meta):
+
+class NextOrPreviousSlotSerializer(BaseNextOrPreviousSlotSerializer):
+
+    class Meta(BaseNextOrPreviousSlotSerializer.Meta):
         model = Slot
-        fields = BasePreviousSlotSerializer.Meta.fields + ['facultyName'] 
-
-
-
-class NextSlotSerializer(BaseNextSlotSerializer):
+        fields = BaseNextOrPreviousSlotSerializer.Meta.fields + ['facultyName'] 
 
     facultyName = serializers.CharField(source='faculty.name', read_only=True)
-
-    class Meta(BaseNextSlotSerializer.Meta):
-        model = Slot
-        fields = BaseNextSlotSerializer.Meta.fields + ['facultyName']
 
 
 
@@ -85,17 +71,3 @@ class StudentSignupSerializer(serializers.Serializer):
 
     def create(self,validated_data):
         return StudentProfile.create_profile(**validated_data)
-
-
-
-
-
-
-
-
-
-    
-
-
-
-

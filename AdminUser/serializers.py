@@ -1,20 +1,20 @@
 
+from urllib import request
 from uuid import UUID
-
-from AdminUser import models
 from operator import itemgetter
+
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework import serializers
 from rest_framework.serializers import ValidationError
-from django.db.models import Q  
 
-from base.models import Timing, Slot, Batch,Broadcast
+from base.models import Slot, Batch,Broadcast
 from FacultyUser.models import FacultyProfile  
 from StudentUser.models import StudentProfile
-
-from .utils import ApiErrors
 from .models import AdminProfile
 from base.utils import PasswordMinLengthValidator, unique_email_validator,get_image
+from base.serializers import AdminSlotDisplaySerializer
+from base import response
 
 
 class EmailSerializer(serializers.Serializer):
@@ -37,7 +37,9 @@ class AdminSignupSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         return {'status':1,'data':'Admin Account created successfully, login to continue.'}
+    
         
+""" Faculty Serializers from Admin perspective """
 
 class FacultySerializer(serializers.ModelSerializer):
     """
@@ -88,9 +90,9 @@ class FacultySlotSerializer(serializers.ModelSerializer):
         fields = ['title', 'batch', 'weekday', 'startTime', 'endTime']
 
     batch = serializers.CharField(source='batch.title')
-    weekday = serializers.CharField(source='timing.get_weekday_string')
-    startTime = serializers.CharField(source='timing.get_start_time')
-    endTime = serializers.CharField(source='timing.get_end_time')
+    weekday = serializers.CharField(source='get_weekday_string')
+    startTime = serializers.CharField(source='get_start_time')
+    endTime = serializers.CharField(source='get_end_time')
 
 
 class FacultyBatchSerializer(serializers.ModelSerializer):
@@ -126,7 +128,7 @@ class FacultyDetailSerializer(serializers.ModelSerializer):
         return instance.joined and instance.joined.strftime('%d %b %Y')
 
     def get_assignedClasses(self,instance):
-        allTaughtSlots = instance.teaches_in.order_by('timing__weekday')   
+        allTaughtSlots = instance.teaches_in.order_by('weekday','start_time')   
         return FacultySlotSerializer(allTaughtSlots,many=True).data
 
     def get_assignedBatches(self,instance):
@@ -134,111 +136,83 @@ class FacultyDetailSerializer(serializers.ModelSerializer):
         return FacultyBatchSerializer(allTaughtBatches,many=True).data    
 
 
-class TimingSerializer(serializers.ModelSerializer):
+""" Slot Serializers """
 
-    class Meta:
-        model = Timing
-        fields = "__all__"
-
-
-    def validate(self,validated_data):
-        start,end = itemgetter('start_time','end_time')(validated_data)
-
-        if start >= end:
-            raise ValidationError(ApiErrors.START_TIME_GREATER)
-
-        return validated_data
-
-#Used for both read/write.
-#TODO:Make it a base serializer for student and admin maybe?
-class SlotSerializer(serializers.ModelSerializer):
+class SlotCreateUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Slot
 
-        fields = ['id','title', 'timing', 'batch', 'faculty',
-                   'startTime', 'endTime','weekday','duration', 'created', 'facultyName']
+        fields = ['title', 'batch', 'faculty',
+                   'start_time', 'end_time','weekday']
 
-        extra_kwargs = {'batch': {'write_only': True},
-                        'faculty': {'write_only': True}}
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        #Move this into extra_kwargs
-        read_only_fields = ['id']
+        if 'context' in kwargs:
+            if 'request' in kwargs['context'] and \
+                    kwargs['context']['request'].method == 'PUT':
+                self.fields.pop('batch')
+                
+    batch = serializers.SlugRelatedField(queryset=Batch.objects.all(),slug_field='uuid')
+    faculty = serializers.SlugRelatedField(queryset=FacultyProfile.objects.all(),slug_field='uuid')
 
-    timing = TimingSerializer(write_only=True)
-
-    #Read Only Fields
-    startTime = serializers.CharField(read_only=True,source='timing.get_start_time')
-    endTime = serializers.CharField(read_only=True,source='timing.get_end_time')
-    weekday = serializers.CharField(read_only=True,source='timing.get_weekday_string')
-    duration = serializers.CharField(read_only=True,source='timing.get_duration')
-    created = serializers.CharField(read_only=True, source='get_last_activity')
-    facultyName = serializers.CharField(source='faculty.name', read_only=True)
-
-
-    #Write Only methods.
-    def create(self,validated_data):       
-        validated_data['timing'],_ = Timing.objects.get_or_create(**validated_data.pop('timing'))
-        
-        return Slot.objects.create(**validated_data)
+    def create(self,validated_data):    
+        try:
+            slot = Slot.create_slot(**validated_data)          
+        except DjangoValidationError as err:        
+            raise ValidationError(err.message)
+        return slot
 
     def update(self,instance,validated_data):
-        old_timing = instance.timing
-        validated_data['timing'], _ = Timing.objects.get_or_create(**validated_data.pop('timing'))
-        
-        for key,value in validated_data.items():
-            setattr(instance,key,value)        
-        instance.save()
-
-        #If timing is changed and the old timing has no attached slots. (Garbage Collection)
-        if old_timing != instance.timing and not old_timing.slot_set.exists():
-            old_timing.delete()
-
+        try:
+            instance.update_slot(**validated_data)
+        except DjangoValidationError as err:
+            raise ValidationError(err.message)
         return instance
 
+    def validate_batch(self,batch):
+        adminProfile = self.context.get('request').profile
+        if batch.admin != adminProfile:
+            raise ValidationError(response.noBatchOwnershipResponse())
+        return batch
 
-    def validate(self,validated_data):       
-        admin_profile = self.context.get('profile')       
-        faculty = validated_data.get('faculty')
-        batch = validated_data.get('batch')
+    def validate_faculty(self,faculty):
+        adminProfile = self.context.get('request').profile
+        if faculty.admin != adminProfile:
+            raise ValidationError(response.noFacultyOwnershipResponse())
+        return faculty
 
-        #During Slot update
-        if self.instance and self.instance.batch != batch:
-            raise ValidationError('Cant Move a slot to another batch!')
-        
-
-        #Making Sure that the requested Faculty/Batch is connected to the current Admin
-        for index,item in enumerate([faculty.admin,batch.admin]):           
-            if item != admin_profile:
-                raise ValidationError(ApiErrors.NO_OWNERSHIP.format(resource = 'Batch' if index == 1 else 'Faculty',
-                                                                                action = 'added' if index == 1 else 'invited'))
-
-
-        #Move this logic to Slot create/update
-        self.start_time,self.end_time,self.weekday = itemgetter('start_time','end_time','weekday')(validated_data.get('timing'))
-
-        all_slots = Slot.objects.filter(timing__weekday=self.weekday).filter(Q(faculty=faculty)|Q(batch=batch))
-        if self.instance:
-            all_slots = all_slots.exclude(pk=self.instance.pk)
-
-        overlapped_slot = all_slots.detect_overlap(interval=(self.start_time,self.end_time))
-
-
-        if overlapped_slot is not None:
-            start_time = overlapped_slot.timing.get_start_time()
-            end_time = overlapped_slot.timing.get_end_time()
-
-            #If overlap is with a slot in current batch.
-            if overlapped_slot.batch == batch:
-                raise ValidationError(ApiErrors.SLOT_OVERLAP.format(title=overlapped_slot.title,
-                                     start_time=start_time,end_time=end_time))
-            #If overlap is with a slot in another batch which is taught by the requested faculty.
-            else:
-                raise ValidationError(ApiErrors.FACULTY_SLOT_OVERLAP.format(faculty=faculty.name,batch=overlapped_slot.batch.title,
-                                      start_time=start_time,end_time=end_time))
-        
+    def validate(self,validated_data):               
+        startTime,endTime = itemgetter('start_time','end_time')(validated_data)
+        if startTime >= endTime:
+            raise ValidationError(response.startTimeGreaterResponse())  
         return validated_data
 
+    def to_representation(self, instance):
+        newRep =  AdminSlotDisplaySerializer(instance).data
+        return {'status': 1, 'data': newRep}
+
+
+class SlotRetrieveSerializer(AdminSlotDisplaySerializer):
+    
+    class Meta(AdminSlotDisplaySerializer.Meta):
+        fields = ['id','title', 'startTime', 'endTime','weekday','faculty']
+
+    startTime = serializers.SerializerMethodField()
+    endTime = serializers.SerializerMethodField()
+    weekday = serializers.IntegerField()
+
+    #Need 24 Hour format instead of 12 Hour format
+    def get_startTime(self,instance):
+        return instance.start_time.strftime('%H:%M')
+
+    def get_endTime(self,instance):
+        return instance.end_time.strftime('%H:%M')
+
+    def to_representation(self, instance):
+        response =  super().to_representation(instance)
+        return {'status': 1, 'data': response}
 
 """ Batch Serializers """
 
@@ -292,6 +266,7 @@ class BatchUpdateSerializer(BatchSerializer):
                 'Max students can\'t be lower than current student count!')
         return max_student
 
+    #TODO: Make case style same in create & update
     def to_representation(self, instance):
         response =  super().to_representation(instance)
         response['onboardStudents'] = response.pop('onboard_students')
@@ -318,10 +293,11 @@ class BatchDetailSerializer(serializers.ModelSerializer):
         return instance.getAssignedFaculties().count()
 
     def get_weekdayData(self,instance):
-        all_slots = instance.connected_slots.select_related('timing', 'faculty')\
-            .order_by('timing__weekday','timing__start_time')
+        all_slots = instance.connected_slots.select_related('faculty')\
+            .order_by('weekday','start_time')
         
-        return all_slots.serialize_and_group_by_weekday(serializer = SlotSerializer)
+        return all_slots.serialize_and_group_by_weekday(serializer = AdminSlotDisplaySerializer,
+                                                        context=self.context)
 
     def to_representation(self, instance):
         response = super().to_representation(instance)
@@ -335,6 +311,12 @@ class BatchFacultySerializer(serializers.ModelSerializer):
     class Meta:
         model = FacultyProfile
         fields = ['name','image']
+        
+    image = serializers.SerializerMethodField()
+
+    def get_image(self,instance):
+        request = self.context.get('request')
+        return get_image(request,instance.user.thumbnail)
 
 
 class BatchListDetailSerializer(serializers.ModelSerializer):
@@ -364,7 +346,7 @@ class BatchListDetailSerializer(serializers.ModelSerializer):
 
     def get_assignedFaculties(self,instance):
         queryset = instance.getAssignedFaculties()
-        return BatchFacultySerializer(queryset,many=True).data
+        return BatchFacultySerializer(queryset,context=self.context,many=True).data
 
 
 class BatchSlotSerializer(serializers.ModelSerializer):
@@ -375,9 +357,9 @@ class BatchSlotSerializer(serializers.ModelSerializer):
         model = Slot
         fields = ['title','startTime', 'endTime', 'weekday', 'facultyName']
 
-    startTime = serializers.CharField(source='timing.get_start_time')
-    endTime = serializers.CharField(source='timing.get_end_time')
-    weekday = serializers.CharField(source='timing.get_weekday_string')
+    startTime = serializers.CharField(source='get_start_time')
+    endTime = serializers.CharField(source='get_end_time')
+    weekday = serializers.CharField(source='get_weekday_string')
     facultyName = serializers.CharField(source='faculty.name', read_only=True)
 
 

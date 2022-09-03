@@ -1,14 +1,14 @@
 from datetime import time
 from collections import defaultdict
 
-from django.db.models import Q,Count
+from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 from rest_framework.authtoken.models import Token
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny,IsAuthenticated
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.parsers import FormParser,MultiPartParser
 
 from .serializers import UserSerializer,ActivitySerializer,UserImageSerializer

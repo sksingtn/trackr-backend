@@ -1,5 +1,4 @@
 
-from AdminUser.models import AdminProfile
 from django.core.exceptions import ObjectDoesNotExist
 
 from rest_framework.exceptions import ValidationError
@@ -7,8 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 
 from StudentUser.models import StudentProfile
 from FacultyUser.models import FacultyProfile
+from AdminUser.models import AdminProfile
 
 #TODO: Make sure all error messages have the uniform response structure.
+#TODO: use 401 & 403 response
 class IsAuthenticatedWithProfile(IsAuthenticated):
     def has_permission(self, request, view):
         """

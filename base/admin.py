@@ -1,7 +1,5 @@
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
-from django.utils.translation import ugettext_lazy as _
-from .models import Batch,Slot,Timing,CustomUser,Activity
+from .models import Batch,Slot,CustomUser,Activity
 
 
-admin.site.register([ Batch,Slot, Timing ,Activity,CustomUser])
+admin.site.register([ Batch,Slot,Activity,CustomUser])

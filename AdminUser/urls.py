@@ -20,11 +20,8 @@ urlpatterns = [
     
     ##Admin Slot Handling
 
-    #TODO: Need a retrieve method
-    #Create a new slot on POST.
-    path('slots/',view.SlotView.as_view(),name="admin-slots"),
-    #Update/Delete the given slot on PUT/DELETE.
-    path('slots/<int:slot_id>/', view.SlotView.as_view(),name="admin-slots"),
+    path('slot/',view.SlotView.as_view(),name="admin-slots"),
+    path('slot/<uuid:slot_id>/', view.SlotRUDView.as_view(),name="admin-slots"),
  
     ###Admin Batch Handling
    

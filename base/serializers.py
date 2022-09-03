@@ -1,77 +1,92 @@
 
-from operator import itemgetter
-
 from rest_framework import serializers
+
 from base.models import Activity, CustomUser, Slot
 from base.utils import get_elapsed_string
 
-#TODO: BASE SLOT CLASS NEEDED
+"""
+Slot Display Serializers for Admin,Faculty & students.
+"""
+class BaseSlotDisplaySerializer(serializers.ModelSerializer):
 
-#TODO:A base class is also needed here to enfore DRY.
+    class Meta:
+        model = Slot
+        fields = ['id','title', 'startTime', 'endTime',
+                'weekday','duration', 'lastModified']
 
+    id = serializers.CharField(source='uuid')
+    startTime = serializers.CharField(source='get_start_time')
+    endTime = serializers.CharField(source='get_end_time')
+    weekday = serializers.CharField(source='get_weekday_string')
+    duration = serializers.CharField(source='get_duration')
+    lastModified = serializers.CharField(source='get_last_modified')
+
+
+class FacultySlotDisplaySerializer(BaseSlotDisplaySerializer):
+    """
+    Inherited BaseSlotDisplaySerializer and added batch name
+    to each slot which is needed in Faculty perspective.
+    """
+    class Meta(BaseSlotDisplaySerializer.Meta):
+        fields = BaseSlotDisplaySerializer.Meta.fields + ['batch']
+
+    batch = serializers.CharField(source='batch.title')
+
+
+class SlotDisplayWithFacultySerializer(BaseSlotDisplaySerializer):
+    """
+    Inherited BaseSlotDisplaySerializer and added faculty profile details
+    to each slot which is needed in Student & Admin perspective.
+    """
+    class Meta(BaseSlotDisplaySerializer.Meta):
+        fields = BaseSlotDisplaySerializer.Meta.fields + ['faculty']
+
+    faculty = serializers.SerializerMethodField()
+
+    def get_faculty(self,instance):
+        request = self.context.get('request')
+        faculty = instance.faculty
+        return {'id':faculty.uuid,'name':faculty.name
+                ,'image':faculty.get_profile_image(request)}
+
+class StudentSlotDisplaySerializer(SlotDisplayWithFacultySerializer):
+    pass
+
+class AdminSlotDisplaySerializer(SlotDisplayWithFacultySerializer):
+    pass
+
+
+"""
+Serializers for Previous,Ongoing,Upcoming Slots.
+"""
 class BaseOngoingSlotSerializer(serializers.ModelSerializer):
 
-    startTime = serializers.CharField(source='timing.get_start_time')
-    endTime = serializers.CharField(source='timing.get_end_time')
-    totalSeconds = serializers.IntegerField(source='timing.get_duration_in_seconds')
-    elapsedSeconds = serializers.SerializerMethodField()
+    class Meta:
+        model = Slot
+        fields = ['title', 'startTime','endTime', 'totalSeconds']
 
-    def get_elapsedSeconds(self, instance):
-        return instance.timing.get_elapsed_seconds(currentDateTime=self.context['currentDateTime'])
+    startTime = serializers.CharField(source='get_start_time')
+    endTime = serializers.CharField(source='get_end_time')
+    totalSeconds = serializers.IntegerField(source='get_duration_in_seconds')
+
+
+class BaseNextOrPreviousSlotSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Slot
-        fields = ['title', 'startTime',
-                  'endTime', 'totalSeconds', 'elapsedSeconds']
+        fields = ['title','startTime','endTime', 'weekday']
 
-
-
-class BasePreviousSlotSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Slot
-        fields = ['title', 'endedSince',
-                  'startTime', 'endTime', 'weekday']
-
-    endedSince = serializers.SerializerMethodField()
-    startTime = serializers.CharField(source='timing.get_start_time')
-    endTime = serializers.CharField(source='timing.get_end_time')
+    startTime = serializers.CharField(source='get_start_time')
+    endTime = serializers.CharField(source='get_end_time')
     weekday = serializers.SerializerMethodField()
 
     def get_weekday(self, instance):
         currentWeekDay = self.context['currentDateTime'].weekday()
 
-        if instance.timing.weekday == currentWeekDay:
+        if instance.weekday == currentWeekDay:
             return 'Today'
         else:
-            return instance.timing.get_weekday_string()
-
-    def get_endedSince(self, instance):
-        return instance.timing.get_elapsed(currentDateTime=self.context['currentDateTime'])
-
-
-class BaseNextSlotSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Slot
-        fields = ['title', 'startsIn',
-                  'startTime', 'endTime', 'weekday']
-
-    startsIn = serializers.SerializerMethodField()
-    startTime = serializers.CharField(source='timing.get_start_time')
-    endTime = serializers.CharField(source='timing.get_end_time')
-    weekday = serializers.SerializerMethodField()
-
-    def get_weekday(self, instance):
-        currentWeekDay = self.context['currentDateTime'].weekday()
-
-        if instance.timing.weekday == currentWeekDay:
-            return 'Today'
-        else:
-            return instance.timing.get_weekday_string()
-
-    def get_startsIn(self, instance):
-        return instance.timing.get_elapsed(currentDateTime=self.context['currentDateTime'])
+            return instance.get_weekday_string()
 
 
 class UserSerializer(serializers.Serializer):
@@ -99,4 +114,3 @@ class UserImageSerializer(serializers.ModelSerializer):
 
     #Required
     profile_image = serializers.ImageField(allow_null=False, max_length=100, required=True)
-

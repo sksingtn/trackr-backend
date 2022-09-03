@@ -9,48 +9,29 @@ from rest_framework.exceptions import ValidationError
 
 from .models import FacultyProfile
 from base.models import Batch, Slot,Broadcast
-from AdminUser.serializers import SlotSerializer
 from trackr.settings import FACULTY_INVITE_MAX_AGE
-from base.serializers import (BasePreviousSlotSerializer,BaseOngoingSlotSerializer,BaseNextSlotSerializer)
+from base.serializers import BaseOngoingSlotSerializer,BaseNextOrPreviousSlotSerializer                                
 from StudentUser.models import StudentProfile
 from base.utils import PasswordMinLengthValidator
 
 
 
-class FacultySlotSerializer(SlotSerializer):
-    #Extending to add batch and remove facultyName
-    batch = serializers.CharField(source='batch.title')
-
-    class Meta(SlotSerializer.Meta):
-        fields = ['id', 'title', 'startTime', 'endTime','weekday', 'duration', 'created', 'batch']
-
 
 #Added Batch field to all the faculty serializer classes
-
 class OngoingSlotSerializer(BaseOngoingSlotSerializer):
-
-    batch = serializers.CharField(source='batch.title')
 
     class Meta(BaseOngoingSlotSerializer.Meta):
         model = Slot
         fields = BaseOngoingSlotSerializer.Meta.fields + ['batch']
 
+    batch = serializers.CharField(source='batch.title')
         
 
-class PreviousSlotSerializer(BasePreviousSlotSerializer):
+class NextOrPreviousSlotSerializer(BaseNextOrPreviousSlotSerializer):
 
-    class Meta(BasePreviousSlotSerializer.Meta):
+    class Meta(BaseNextOrPreviousSlotSerializer.Meta):
         model = Slot
-        fields = BasePreviousSlotSerializer.Meta.fields + ['batch']
-
-    batch = serializers.CharField(source='batch.title')
-
-
-class NextSlotSerializer(BaseNextSlotSerializer):
-
-    class Meta(BaseNextSlotSerializer.Meta):
-        model = Slot
-        fields = BaseNextSlotSerializer.Meta.fields + ['batch']
+        fields = BaseNextOrPreviousSlotSerializer.Meta.fields + ['batch']
 
     batch = serializers.CharField(source='batch.title')
 
@@ -85,10 +66,10 @@ class InviteTokenVerifySerializer(serializers.Serializer):
             itemgetter('email', 'invitedBy')(token_context)
             #raises ValueError if not a UUID.
             token_context['invitedBy'] = uuid.UUID(token_context['invitedBy'])
-        except (signing.BadSignature,KeyError,ValueError) as e:
-            raise ValidationError('Link is Invalid!') 
         except signing.SignatureExpired:
             raise ValidationError('Link has expired')
+        except (signing.BadSignature,KeyError,ValueError) as e:
+            raise ValidationError('Link is Invalid!') 
         except Exception:
             raise ValidationError('Something went wrong!')
 
@@ -170,8 +151,4 @@ class BroadcastSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         sent_to = instance.receivers.count()
         return {'status': 1, 'data': f'Broadcast sent to {sent_to} people.'}
-
-
-
-
 

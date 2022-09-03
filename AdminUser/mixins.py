@@ -2,11 +2,11 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from base.models import Batch
+from base.models import Batch,Slot
 from StudentUser.models import StudentProfile
 from FacultyUser.models import FacultyProfile
 
-#TODO: add caching to some mixins
+
 class GetBatchMixin:
     def get_batch(self, batch_id):
         try:
@@ -21,6 +21,14 @@ class GetFacultyMixin:
             return self.request.profile.connected_faculties.get(uuid=faculty_id)
         except FacultyProfile.DoesNotExist:
             raise ValidationError('Matching Faculty does not exist!')
+
+
+class GetSlotMixin:
+    def get_slot(self,slot_id):
+        try:
+            return Slot.objects.get(uuid=slot_id,batch__admin=self.request.profile)
+        except Slot.DoesNotExist:
+            raise ValidationError('Matching Slot does not exist')
 
 
 class BatchToggleMixin:
