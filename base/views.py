@@ -43,7 +43,7 @@ class CommonLoginView(APIView):
             raise ValidationError(str(e))
 
         token,_ = Token.objects.get_or_create(user=base_user)
-        user_info = {'key':token.key,'type':base_user.user_type}
+        user_info = {'token':token.key,'role':base_user.user_type}
 
         return Response({'status':1,'data':user_info},status=status.HTTP_200_OK)
 

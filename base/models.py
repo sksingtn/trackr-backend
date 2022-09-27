@@ -222,7 +222,8 @@ class Slot(models.Model):
         (2, "Wednesday"),
         (3, "Thursday"),
         (4, "Friday"),
-        (5, "Saturday")
+        (5, "Saturday"),
+        (6, "Sunday")
     )
     start_time = models.TimeField()
     end_time = models.TimeField()

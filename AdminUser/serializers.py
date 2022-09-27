@@ -1,9 +1,8 @@
-
-from urllib import request
 from uuid import UUID
 from operator import itemgetter
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 
 from rest_framework import serializers
 from rest_framework.serializers import ValidationError
@@ -15,6 +14,7 @@ from .models import AdminProfile
 from base.utils import PasswordMinLengthValidator, unique_email_validator,get_image
 from base.serializers import AdminSlotDisplaySerializer
 from base import response
+from trackr.settings import WEEKDAYS
 
 
 class EmailSerializer(serializers.Serializer):
@@ -72,9 +72,9 @@ class FacultySerializer(serializers.ModelSerializer):
         
         if self.context.get('request').method == 'POST':           
             if instance.user is not None:
-                msg = 'User Invited Successfully!'
+                msg = 'Faculty Invited Successfully!'
             else:
-                msg = 'User Added SuccessFully!'
+                msg = 'Faculty Added SuccessFully!'
             
             return {'status':1,'data':msg}
 
@@ -190,7 +190,7 @@ class SlotCreateUpdateSerializer(serializers.ModelSerializer):
         return validated_data
 
     def to_representation(self, instance):
-        newRep =  AdminSlotDisplaySerializer(instance).data
+        newRep =  AdminSlotDisplaySerializer(instance,context=self.context).data
         return {'status': 1, 'data': newRep}
 
 
@@ -280,14 +280,21 @@ class BatchDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Batch
         fields = ['id', 'title', 'isActive', 'totalFaculties', 'totalStudents',
-                  'totalClasses', 'weekdayData']
+                  'totalClasses','currentWeekday','weekdayData']
 
     id = serializers.CharField(source='uuid')
     isActive = serializers.BooleanField(source='active')
     totalStudents = serializers.IntegerField(source='total_students')
     totalClasses = serializers.IntegerField(source='total_classes')
     totalFaculties = serializers.SerializerMethodField()
+    currentWeekday = serializers.SerializerMethodField()
     weekdayData = serializers.SerializerMethodField()
+
+    def get_currentWeekday(self,instance):
+        profile = self.context.get("request").profile
+        currentTimezone = profile.timezone
+        weekdayIndex = timezone.localtime().astimezone(currentTimezone).weekday()
+        return WEEKDAYS[weekdayIndex]
 
     def get_totalFaculties(self,instance):
         return instance.getAssignedFaculties().count()

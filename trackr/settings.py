@@ -10,7 +10,7 @@ SECRET_KEY = 'j#dv#qa2&#gy37dp2!tjzbam&ey#e6+8x4s+a!^7#l!&drs*#b'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 AUTH_USER_MODEL = 'base.CustomUser'
 
@@ -20,7 +20,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 FACULTY_INVITE_MAX_AGE = timedelta(days=7)
 
-WEEKDAYS = ['Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday']
+WEEKDAYS = ['Monday', 'Tuesday','Wednesday', 'Thursday', 'Friday', 'Saturday',"Sunday"]
 
 # Application definition
 
