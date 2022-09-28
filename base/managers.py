@@ -55,7 +55,9 @@ class SlotQuerySet(models.QuerySet):
         all_slots = serializer(self,context=context, many=True).data
 
         groupedData = {}
-        for weekday,slots in groupby(all_slots,key=itemgetter('weekday')):
+        getWeekday = itemgetter('weekday')
+        #Data always needs to be sorted when passed to groupby
+        for weekday,slots in groupby(sorted(all_slots,key=getWeekday),key=getWeekday):
             
             slots = list(slots)
             for item in slots:
