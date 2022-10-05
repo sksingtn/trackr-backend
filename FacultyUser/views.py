@@ -1,5 +1,4 @@
 
-from django.utils import timezone
 from django.db.models import Count
 
 from rest_framework.views import APIView
@@ -15,6 +14,7 @@ from .serializers import (BroadcastSerializer,  OngoingSlotSerializer,NextOrPrev
 from base.serializers import FacultySlotDisplaySerializer
 from base.permissions import IsAuthenticatedWithProfile
 from base.models import Slot
+from base.utils import get_weekday
 from .models import FacultyProfile
 
 
@@ -80,7 +80,11 @@ class TimelineView(APIView):
         jsonData = all_slots.order_by('start_time').serialize_and_group_by_weekday(
                     serializer=FacultySlotDisplaySerializer)
 
-        return Response({'status':1,'data':{'timelineData':timelineInfo,'weekdayData': jsonData}},status=status.HTTP_200_OK)
+        return Response({'status':1,
+                        'data':{'timelineData':timelineInfo,
+                                'currentWeekday':get_weekday(tz),
+                                'weekdayData': jsonData}}
+                        ,status=status.HTTP_200_OK)
 
 
 class BroadcastTargetView(ListAPIView):

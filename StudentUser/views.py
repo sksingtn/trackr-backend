@@ -9,6 +9,7 @@ from .serializers import (OngoingSlotSerializer, NextOrPreviousSlotSerializer,
                           InviteLinkVerifySerializer, StudentSignupSerializer)
 from base.serializers import StudentSlotDisplaySerializer
 from base.permissions import IsAuthenticatedWithProfile
+from base.utils import get_weekday
 from StudentUser.models import StudentProfile
 
 
@@ -78,4 +79,8 @@ class TimelineView(APIView):
                     .serialize_and_group_by_weekday(serializer=StudentSlotDisplaySerializer
                                                     ,context={"request":request})
 
-        return Response({ 'status':1 , 'data':{'timelineData': timelineInfo, 'weekdayData': jsonData}}, status=status.HTTP_200_OK)
+        return Response({ 'status':1 , 
+                          'data':{'timelineData': timelineInfo,
+                                  'currentWeekday':get_weekday(tz),
+                                  'weekdayData': jsonData}}, 
+                        status=status.HTTP_200_OK)

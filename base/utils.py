@@ -9,6 +9,7 @@ from rest_framework.views import exception_handler
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.status import HTTP_400_BAD_REQUEST
+from trackr.settings import WEEKDAYS
 
 
 def custom_exception_handler(exc, context):
@@ -116,6 +117,10 @@ def get_time_difference(time1,time2):
     time1 = datetime.combine(commonDate,time1)
     time2 = datetime.combine(commonDate,time2)
     return (time1 - time2).total_seconds()
+
+def get_weekday(currentTimezone):
+    weekdayIndex = timezone.localtime().astimezone(currentTimezone).weekday()
+    return WEEKDAYS[weekdayIndex]
     
 
 

@@ -11,10 +11,11 @@ from base.models import Slot, Batch,Broadcast
 from FacultyUser.models import FacultyProfile  
 from StudentUser.models import StudentProfile
 from .models import AdminProfile
-from base.utils import PasswordMinLengthValidator, unique_email_validator,get_image
+from base.utils import (PasswordMinLengthValidator, unique_email_validator,
+                        get_image,get_weekday)
 from base.serializers import AdminSlotDisplaySerializer
 from base import response
-from trackr.settings import WEEKDAYS
+
 
 
 class EmailSerializer(serializers.Serializer):
@@ -293,8 +294,7 @@ class BatchDetailSerializer(serializers.ModelSerializer):
     def get_currentWeekday(self,instance):
         profile = self.context.get("request").profile
         currentTimezone = profile.timezone
-        weekdayIndex = timezone.localtime().astimezone(currentTimezone).weekday()
-        return WEEKDAYS[weekdayIndex]
+        return get_weekday(currentTimezone)
 
     def get_totalFaculties(self,instance):
         return instance.getAssignedFaculties().count()
