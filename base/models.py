@@ -275,6 +275,12 @@ class Slot(models.Model):
     def get_end_time(self):
         return self.end_time.strftime('%I:%M%p')
 
+    def get_start_time_in_24(self):
+        return self.start_time.strftime('%H:%M')
+
+    def get_end_time_in_24(self):
+        return self.end_time.strftime('%H:%M')
+
     def get_duration_in_seconds(self):
         commonDate = date(1999, 6, 21)
         startTime = datetime.combine(commonDate, self.start_time)

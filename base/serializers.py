@@ -65,8 +65,8 @@ class BaseOngoingSlotSerializer(serializers.ModelSerializer):
         model = Slot
         fields = ['title', 'startTime','endTime', 'totalSeconds']
 
-    startTime = serializers.CharField(source='get_start_time')
-    endTime = serializers.CharField(source='get_end_time')
+    startTime = serializers.CharField(source='get_start_time_in_24')
+    endTime = serializers.CharField(source='get_end_time_in_24')
     totalSeconds = serializers.IntegerField(source='get_duration_in_seconds')
 
 
@@ -76,8 +76,8 @@ class BaseNextOrPreviousSlotSerializer(serializers.ModelSerializer):
         model = Slot
         fields = ['title','startTime','endTime', 'weekday']
 
-    startTime = serializers.CharField(source='get_start_time')
-    endTime = serializers.CharField(source='get_end_time')
+    startTime = serializers.CharField(source='get_start_time_in_24')
+    endTime = serializers.CharField(source='get_end_time_in_24')
     weekday = serializers.SerializerMethodField()
 
     def get_weekday(self, instance):
